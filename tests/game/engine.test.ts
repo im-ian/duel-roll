@@ -389,6 +389,55 @@ describe("game engine", () => {
     ]);
   });
 
+  it("swaps only the selected dice without reordering their lane neighbors", () => {
+    const state = activeState({
+      boards: {
+        A: board(
+          [die("own-1", 1, "NORMAL", "A"), die("own-2", 2, "NORMAL", "A")],
+          [],
+          [],
+        ),
+        B: board(
+          [
+            die("opponent-1", 3, "NORMAL", "B"),
+            die("opponent-shield", 4, "SHIELD", "B"),
+          ],
+          [],
+          [],
+        ),
+      },
+    });
+
+    const swapped = applyCommand(
+      state,
+      "A",
+      {
+        type: "USE_SWAP_ITEM",
+        lane: 0,
+        ownDieId: "own-2",
+        opponentDieId: "opponent-1",
+      },
+      context(),
+    );
+
+    expect(swapped.state.boards.A?.[0].map((die) => die.id)).toEqual([
+      "own-1",
+      "opponent-1",
+    ]);
+    expect(swapped.state.boards.B?.[0].map((die) => die.id)).toEqual([
+      "own-2",
+      "opponent-shield",
+    ]);
+    expect(swapped.events).toMatchObject([
+      {
+        type: "DICE_SWAPPED",
+        playerId: "A",
+        ownDie: { id: "own-2" },
+        opponentDie: { id: "opponent-1" },
+      },
+    ]);
+  });
+
   it("rerolls an opponent normal die while preserving its identity", () => {
     const state = activeState({
       boards: {
