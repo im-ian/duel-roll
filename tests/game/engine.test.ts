@@ -253,4 +253,100 @@ describe("game engine", () => {
     });
     expect(() => assertGameInvariants(state)).not.toThrow();
   });
+
+  it("swaps two dice between own and opponent lanes", () => {
+    const state = activeState({
+      pendingFace: 4,
+      boards: {
+        A: board([die("a1", 1, "NORMAL", "A"), die("a2", 2, "NORMAL", "A")], [], []),
+        B: board([die("b1", 3, "NORMAL", "B"), die("b2", 4, "SHIELD", "B")], [], []),
+      },
+    });
+
+    const result = applyCommand(
+      state,
+      "A",
+      { type: "SWAP_DICE", lane: 0, ownDieId: "a2", opponentDieId: "b1" },
+      context({ rolls: [5] }),
+    );
+
+    expect(result.state.boards.A?.[0].map((d) => d.id)).toEqual(["a1", "b1"]);
+    expect(result.state.boards.B?.[0].map((d) => d.id)).toEqual(["a2", "b2"]);
+    expect(result.state.phase).toBe("TURN_ACTION");
+    expect(result.state.currentPlayerId).toBe("A");
+    expect(result.events.find((e) => e.type === "DICE_SWAPPED")).toMatchObject({
+      actorPlayerId: "A",
+      lane: 0,
+      ownDie: { id: "a2" },
+      opponentDie: { id: "b1" },
+    });
+  });
+
+  it("rejects swap when either die id is missing", () => {
+    const state = activeState({
+      boards: {
+        A: board([die("a1", 1)], [], []),
+        B: board([die("b1", 3)], [], []),
+      },
+    });
+
+    try {
+      applyCommand(
+        state,
+        "A",
+        { type: "SWAP_DICE", lane: 0, ownDieId: "missing", opponentDieId: "b1" },
+        context({ rolls: [1] }),
+      );
+      throw new Error("Expected SWAP_DICE to fail.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RuleError);
+      expect(error).toMatchObject({
+        code: "SWAP_NOT_AVAILABLE",
+        details: { reason: "OWN_DIE_NOT_FOUND" },
+      });
+    }
+  });
+
+  it("rejects swap when either lane is empty", () => {
+    const state = activeState({
+      boards: {
+        A: board([], [], []),
+        B: board([die("b1", 3)], [], []),
+      },
+    });
+
+    try {
+      applyCommand(
+        state,
+        "A",
+        { type: "SWAP_DICE", lane: 0, ownDieId: "a1", opponentDieId: "b1" },
+        context({ rolls: [1] }),
+      );
+      throw new Error("Expected SWAP_DICE to fail.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RuleError);
+      expect(error).toMatchObject({
+        code: "SWAP_NOT_AVAILABLE",
+        details: { reason: "EMPTY_LANE" },
+      });
+    }
+  });
+
+  it("only exposes swapTargets during TURN_ACTION for the current player", () => {
+    const state = activeState({
+      pendingFace: 4,
+      boards: {
+        A: board([die("a1", 1)], [], []),
+        B: board([die("b1", 3)], [], []),
+      },
+    });
+
+    const own = getLegalActions(state, "A");
+    expect(own.swapTargets).toEqual([
+      { lane: 0, ownDieIds: ["a1"], opponentDieIds: ["b1"] },
+    ]);
+
+    const opponent = getLegalActions(state, "B");
+    expect(opponent.swapTargets).toEqual([]);
+  });
 });

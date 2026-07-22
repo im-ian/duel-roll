@@ -73,6 +73,12 @@ export type GameCommand =
       boardOwnerPlayerId: PlayerId;
       lane: LaneIndex;
     }
+  | {
+      type: "SWAP_DICE";
+      lane: LaneIndex;
+      ownDieId: string;
+      opponentDieId: string;
+    }
   | { type: "HOLD" }
   | { type: "SURRENDER" };
 
@@ -105,6 +111,13 @@ export type GameEvent =
       lane: LaneIndex;
       dice: Die[];
     }
+  | {
+      type: "DICE_SWAPPED";
+      actorPlayerId: PlayerId;
+      lane: LaneIndex;
+      ownDie: Die;
+      opponentDie: Die;
+    }
   | { type: "TAZZA_USED"; playerId: PlayerId }
   | {
       type: "TAZZA_SELECTED";
@@ -125,6 +138,11 @@ export type LegalActions = {
   bonusTargets: Array<{
     boardOwnerPlayerId: PlayerId;
     lane: LaneIndex;
+  }>;
+  swapTargets: Array<{
+    lane: LaneIndex;
+    ownDieIds: string[];
+    opponentDieIds: string[];
   }>;
 };
 

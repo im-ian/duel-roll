@@ -399,6 +399,56 @@ export function applyCommand(
       break;
     }
 
+    case "SWAP_DICE": {
+      assertPhase(state, ["TURN_ACTION"]);
+      assertLane(command.lane);
+      const opponentPlayerId = opponentOf(state.players, actorPlayerId);
+      const ownBoard = boardOf(state, actorPlayerId);
+      const opponentBoard = boardOf(state, opponentPlayerId);
+      const ownLane = ownBoard[command.lane];
+      const opponentLane = opponentBoard[command.lane];
+
+      if (ownLane.length === 0 || opponentLane.length === 0) {
+        throw new RuleError(
+          "SWAP_NOT_AVAILABLE",
+          "Both lanes must contain at least one die to swap.",
+          { reason: "EMPTY_LANE" },
+        );
+      }
+
+      const ownIndex = ownLane.findIndex((die) => die.id === command.ownDieId);
+      if (ownIndex === -1) {
+        throw new RuleError(
+          "SWAP_NOT_AVAILABLE",
+          "The selected own die was not found in the lane.",
+          { reason: "OWN_DIE_NOT_FOUND" },
+        );
+      }
+      const opponentIndex = opponentLane.findIndex(
+        (die) => die.id === command.opponentDieId,
+      );
+      if (opponentIndex === -1) {
+        throw new RuleError(
+          "SWAP_NOT_AVAILABLE",
+          "The selected opponent die was not found in the lane.",
+          { reason: "OPPONENT_DIE_NOT_FOUND" },
+        );
+      }
+
+      const swappedOwnDie = ownLane[ownIndex]!;
+      const swappedOpponentDie = opponentLane[opponentIndex]!;
+      ownLane[ownIndex] = swappedOpponentDie;
+      opponentLane[opponentIndex] = swappedOwnDie;
+      events.push({
+        type: "DICE_SWAPPED",
+        actorPlayerId,
+        lane: command.lane,
+        ownDie: swappedOwnDie,
+        opponentDie: swappedOpponentDie,
+      });
+      break;
+    }
+
     case "HOLD": {
       assertPhase(state, ["TURN_ACTION", "TAZZA_CHOICE"]);
       if (state.pending?.source === "TURN") {
@@ -435,6 +485,7 @@ export function getLegalActions(
     ownPlacementLanes: [],
     alkkagiLanes: [],
     bonusTargets: [],
+    swapTargets: [],
   };
 
   if (
@@ -448,13 +499,23 @@ export function getLegalActions(
     legal.canUseTazza = state.tazzaUsed[viewerPlayerId] === false;
     legal.canHold = true;
     const viewerBoard = boardOf(state, viewerPlayerId);
+    const opponentPlayerId = opponentOf(state.players, viewerPlayerId);
+    const opponentBoard = boardOf(state, opponentPlayerId);
     legal.ownPlacementLanes = laneIndexes().filter(
       (lane) => viewerBoard[lane].length < 3,
     );
 
+    legal.swapTargets = laneIndexes()
+      .filter(
+        (lane) => viewerBoard[lane].length > 0 && opponentBoard[lane].length > 0,
+      )
+      .map((lane) => ({
+        lane,
+        ownDieIds: viewerBoard[lane].map((die) => die.id),
+        opponentDieIds: opponentBoard[lane].map((die) => die.id),
+      }));
+
     if (state.pending.original.kind === "NORMAL") {
-      const opponentPlayerId = opponentOf(state.players, viewerPlayerId);
-      const opponentBoard = boardOf(state, opponentPlayerId);
       const pendingFace = state.pending.original.face;
       legal.alkkagiLanes = laneIndexes().filter(
         (lane) =>

@@ -79,6 +79,12 @@ export const GameCommandSchema = z.discriminatedUnion("type", [
     boardOwnerPlayerId: z.string().min(1),
     lane: LaneSchema,
   }),
+  z.object({
+    type: z.literal("SWAP_DICE"),
+    lane: LaneSchema,
+    ownDieId: z.string().min(1),
+    opponentDieId: z.string().min(1),
+  }),
   z.object({ type: z.literal("HOLD") }),
   z.object({ type: z.literal("SURRENDER") }),
 ]);

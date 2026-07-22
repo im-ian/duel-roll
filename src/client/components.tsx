@@ -49,12 +49,36 @@ export function DieView({
   );
 }
 
-export function DiceRow({ dice }: { dice: Die[] }) {
+export function DiceRow({
+  dice,
+  pickable = false,
+  selectedId,
+  onPick,
+}: {
+  dice: Die[];
+  pickable?: boolean;
+  selectedId?: string;
+  onPick?: (dieId: string) => void;
+}) {
   return (
     <div className="dice-row">
-      {dice.map((die) => (
-        <DieView key={die.id} die={die} />
-      ))}
+      {dice.map((die) => {
+        const isSelected = selectedId === die.id;
+        if (pickable && onPick) {
+          return (
+            <button
+              type="button"
+              key={die.id}
+              className={`die-button ${isSelected ? "die-button--selected" : ""}`}
+              onClick={() => onPick(die.id)}
+              aria-pressed={isSelected}
+            >
+              <DieView die={die} />
+            </button>
+          );
+        }
+        return <DieView key={die.id} die={die} />;
+      })}
       {Array.from({ length: 3 - dice.length }, (_, index) => (
         <span className="die-slot" key={`empty-${index}`} aria-hidden="true" />
       ))}
@@ -67,9 +91,12 @@ type TargetRowProps = {
   score: number;
   dice: Die[];
   action?: string;
-  tone?: "place" | "attack" | "bonus";
+  tone?: "place" | "attack" | "bonus" | "swap";
   disabled?: boolean;
   onClick?: () => void;
+  dicePickable?: boolean;
+  diceSelectedId?: string;
+  onPickDie?: (dieId: string) => void;
 };
 
 export function TargetRow({
@@ -80,11 +107,19 @@ export function TargetRow({
   tone,
   disabled,
   onClick,
+  dicePickable,
+  diceSelectedId,
+  onPickDie,
 }: TargetRowProps) {
   const contents = (
     <>
       <span className="target-row__label">{label}</span>
-      <DiceRow dice={dice} />
+      <DiceRow
+        dice={dice}
+        pickable={dicePickable}
+        selectedId={diceSelectedId}
+        onPick={onPickDie}
+      />
       <span className="target-row__score">{score}</span>
       {action && <span className="target-row__action">{action}</span>}
     </>
@@ -113,6 +148,11 @@ export function LaneCard({
   ownScore,
   opponentAction,
   ownAction,
+  swapMode = false,
+  selectedOpponentDieId,
+  selectedOwnDieId,
+  onPickOpponentDie,
+  onPickOwnDie,
   disabled,
 }: {
   lane: LaneIndex;
@@ -120,8 +160,13 @@ export function LaneCard({
   ownDice: Die[];
   opponentScore: number;
   ownScore: number;
-  opponentAction?: { label: string; tone: "attack" | "bonus"; run: () => void };
-  ownAction?: { label: string; tone: "place" | "bonus"; run: () => void };
+  opponentAction?: { label: string; tone: "attack" | "bonus" | "swap"; run: () => void };
+  ownAction?: { label: string; tone: "place" | "bonus" | "swap"; run: () => void };
+  swapMode?: boolean;
+  selectedOpponentDieId?: string;
+  selectedOwnDieId?: string;
+  onPickOpponentDie?: (dieId: string) => void;
+  onPickOwnDie?: (dieId: string) => void;
   disabled?: boolean;
 }) {
   const difference = ownScore - opponentScore;
@@ -132,7 +177,10 @@ export function LaneCard({
         ? `상대가 +${Math.abs(difference)}`
         : "동률";
   return (
-    <section className="lane-card" aria-label={`${lane + 1}번 라인`}>
+    <section
+      className={`lane-card ${swapMode ? "lane-card--swap" : ""}`}
+      aria-label={`${lane + 1}번 라인`}
+    >
       <header className="lane-card__header">
         <span>LINE 0{lane + 1}</span>
         <span className={difference > 0 ? "ahead" : difference < 0 ? "behind" : ""}>
@@ -147,6 +195,9 @@ export function LaneCard({
         tone={opponentAction?.tone}
         disabled={disabled}
         onClick={opponentAction?.run}
+        dicePickable={swapMode}
+        diceSelectedId={selectedOpponentDieId}
+        onPickDie={onPickOpponentDie}
       />
       <TargetRow
         label="나"
@@ -156,6 +207,9 @@ export function LaneCard({
         tone={ownAction?.tone}
         disabled={disabled}
         onClick={ownAction?.run}
+        dicePickable={swapMode}
+        diceSelectedId={selectedOwnDieId}
+        onPickDie={onPickOwnDie}
       />
     </section>
   );

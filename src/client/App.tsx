@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import type {
   Board,
@@ -19,7 +19,13 @@ import {
 import { useRoomSession } from "./use-room-session";
 import type { ConnectionState, PendingAction } from "./use-room-session";
 
-type Overlay = "RULES" | "HOLD" | "SURRENDER" | null;
+type Overlay = "RULES" | "HOLD" | "SURRENDER" | "SWAP" | null;
+
+type SwapSelection = {
+  lane: LaneIndex;
+  ownDieId: string;
+  opponentDieId: string;
+};
 
 function normalizeCode(value: string): string {
   return value.toUpperCase().replace(/[\s-]/g, "").slice(0, 6);
@@ -238,6 +244,7 @@ function eventText(event: GameEvent, selfPlayerId: PlayerId): string {
     case "TURN_STARTED": return `${who(event.playerId)} 주사위를 굴렸습니다.`;
     case "DIE_PLACED": return `${who(event.playerId)} ${event.lane + 1}번 라인에 놓았습니다.`;
     case "DICE_REMOVED": return `${who(event.byPlayerId)} 알까기로 ${event.dice.length}개를 제거했습니다.`;
+    case "DICE_SWAPPED": return `${who(event.actorPlayerId)} ${event.lane + 1}번 라인에서 알을 맞바꾸었습니다.`;
     case "TAZZA_USED": return `${who(event.playerId)} 타짜를 사용했습니다.`;
     case "PLAYER_HELD": return `${who(event.playerId)} 홀드했습니다.`;
     case "PLAYER_SURRENDERED": return `${who(event.playerId)} 항복했습니다.`;
@@ -281,6 +288,8 @@ function GameScreen({
   onRules: () => void;
 }) {
   const [overlay, setOverlay] = useState<Overlay>(null);
+  const [swapLane, setSwapLane] = useState<LaneIndex | null>(null);
+  const [swapPicks, setSwapPicks] = useState<SwapSelection | null>(null);
   const game = room.game;
   if (!game) return <Spinner label="경기를 준비하는 중" />;
   const state = game.state;
@@ -300,11 +309,65 @@ function GameScreen({
   const controlsLocked = connection !== "OPEN" || Boolean(pending);
   const currentDie = pendingDie(state);
   const isBonus = state.phase === "BONUS_PLACEMENT";
+  const swapAvailable = isMyTurn && state.phase === "TURN_ACTION" && game.legalActions.swapTargets.length > 0;
+  const swapActive = swapLane !== null;
 
   const hasBonusTarget = (boardOwnerPlayerId: PlayerId, lane: LaneIndex) =>
     game.legalActions.bonusTargets.some(
       (target) => target.boardOwnerPlayerId === boardOwnerPlayerId && target.lane === lane,
     );
+
+  const cancelSwap = () => {
+    setSwapLane(null);
+    setSwapPicks(null);
+  };
+
+  const startSwap = (lane: LaneIndex) => {
+    setSwapLane(lane);
+    setSwapPicks(null);
+  };
+
+  const pickSwapDie = (lane: LaneIndex, side: "own" | "opponent", dieId: string) => {
+    if (!swapActive) return;
+    setSwapPicks((current) => {
+      if (!current || current.lane !== lane) {
+        return {
+          lane,
+          ownDieId: side === "own" ? dieId : "",
+          opponentDieId: side === "opponent" ? dieId : "",
+        };
+      }
+      if (side === "opponent") {
+        return { ...current, opponentDieId: dieId };
+      }
+      return { ...current, ownDieId: dieId };
+    });
+  };
+
+  const submitSwap = () => {
+    if (!swapLane || !swapPicks || !swapPicks.opponentDieId || !swapPicks.ownDieId) {
+      return;
+    }
+    const sent = onCommand(
+      {
+        type: "SWAP_DICE",
+        lane: swapLane,
+        ownDieId: swapPicks.ownDieId,
+        opponentDieId: swapPicks.opponentDieId,
+      },
+      `${swapLane + 1}번 라인 알 교환 중`,
+    );
+    if (sent) {
+      cancelSwap();
+    }
+  };
+
+  // Reset swap selection whenever it is no longer the player's turn.
+  useEffect(() => {
+    if (!isMyTurn && swapLane !== null) {
+      cancelSwap();
+    }
+  }, [isMyTurn, swapLane]);
 
   const instruction = !isMyTurn
     ? state.phase === "TAZZA_CHOICE"
@@ -314,7 +377,9 @@ function GameScreen({
       ? "기존 눈과 새 눈 중 하나를 선택하세요."
       : state.phase === "BONUS_PLACEMENT"
         ? "실드를 놓을 보드와 라인을 선택하세요."
-        : "놓거나 공격할 라인을 선택하세요.";
+        : swapActive
+          ? "같은 라인의 상대 알과 내 알을 각각 골라 교환하세요."
+          : "놓거나 공격할 라인을 선택하세요.";
 
   return (
     <main className="game shell shell--game">
@@ -341,6 +406,46 @@ function GameScreen({
           const canAttack = game.legalActions.alkkagiLanes.includes(lane);
           const bonusOwn = hasBonusTarget(selfId, lane);
           const bonusOpponent = hasBonusTarget(opponentId, lane);
+          const swapTarget = game.legalActions.swapTargets.find(
+            (target) => target.lane === lane,
+          );
+          const swapLaneActive = swapActive && swapLane === lane;
+          const laneOpponentAction = swapLaneActive
+            ? undefined
+            : canAttack
+              ? {
+                  label: "알까기",
+                  tone: "attack" as const,
+                  run: () => { onCommand({ type: "ALKKAGI", lane }, `${lane + 1}번 라인 공격 중`); },
+                }
+              : bonusOpponent
+                ? {
+                    label: "상대에게 실드",
+                    tone: "bonus" as const,
+                    run: () => { onCommand({ type: "PLACE_BONUS_SHIELD", boardOwnerPlayerId: opponentId, lane }, "보너스 실드 배치 중"); },
+                  }
+                : swapTarget && swapAvailable
+                  ? {
+                      label: "교환",
+                      tone: "swap" as const,
+                      run: () => startSwap(lane),
+                    }
+                  : undefined;
+          const laneOwnAction = swapLaneActive
+            ? undefined
+            : canPlace
+              ? {
+                  label: "놓기",
+                  tone: "place" as const,
+                  run: () => { onCommand({ type: "PLACE_OWN", lane }, `${lane + 1}번 라인 배치 중`); },
+                }
+              : bonusOwn
+                ? {
+                    label: "내게 실드",
+                    tone: "bonus" as const,
+                    run: () => { onCommand({ type: "PLACE_BONUS_SHIELD", boardOwnerPlayerId: selfId, lane }, "보너스 실드 배치 중"); },
+                  }
+                : undefined;
           return (
             <LaneCard
               key={lane}
@@ -350,24 +455,29 @@ function GameScreen({
               opponentScore={opponentScores[lane]}
               ownScore={ownScores[lane]}
               disabled={controlsLocked}
-              opponentAction={canAttack ? {
-                label: "알까기",
-                tone: "attack",
-                run: () => { onCommand({ type: "ALKKAGI", lane }, `${lane + 1}번 라인 공격 중`); },
-              } : bonusOpponent ? {
-                label: "상대에게 실드",
-                tone: "bonus",
-                run: () => { onCommand({ type: "PLACE_BONUS_SHIELD", boardOwnerPlayerId: opponentId, lane }, "보너스 실드 배치 중"); },
-              } : undefined}
-              ownAction={canPlace ? {
-                label: "놓기",
-                tone: "place",
-                run: () => { onCommand({ type: "PLACE_OWN", lane }, `${lane + 1}번 라인 배치 중`); },
-              } : bonusOwn ? {
-                label: "내게 실드",
-                tone: "bonus",
-                run: () => { onCommand({ type: "PLACE_BONUS_SHIELD", boardOwnerPlayerId: selfId, lane }, "보너스 실드 배치 중"); },
-              } : undefined}
+              opponentAction={laneOpponentAction}
+              ownAction={laneOwnAction}
+              swapMode={swapLaneActive}
+              selectedOpponentDieId={
+                swapLaneActive && swapPicks?.lane === lane
+                  ? swapPicks.opponentDieId || undefined
+                  : undefined
+              }
+              selectedOwnDieId={
+                swapLaneActive && swapPicks?.lane === lane
+                  ? swapPicks.ownDieId || undefined
+                  : undefined
+              }
+              onPickOpponentDie={
+                swapLaneActive
+                  ? (dieId) => pickSwapDie(lane, "opponent", dieId)
+                  : undefined
+              }
+              onPickOwnDie={
+                swapLaneActive
+                  ? (dieId) => pickSwapDie(lane, "own", dieId)
+                  : undefined
+              }
             />
           );
         })}
@@ -406,6 +516,25 @@ function GameScreen({
               disabled={!game.legalActions.canHold || controlsLocked}
               onClick={() => setOverlay("HOLD")}
             >홀드</button>
+          </div>
+        )}
+        {isMyTurn && swapActive && state.phase === "TURN_ACTION" && (
+          <div className="action-dock__buttons">
+            <button
+              className="button button--primary"
+              disabled={
+                !swapPicks ||
+                !swapPicks.ownDieId ||
+                !swapPicks.opponentDieId ||
+                controlsLocked
+              }
+              onClick={submitSwap}
+            >교환 확정</button>
+            <button
+              className="button button--ghost"
+              disabled={controlsLocked}
+              onClick={cancelSwap}
+            >교환 취소</button>
           </div>
         )}
       </footer>

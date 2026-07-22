@@ -190,4 +190,57 @@ describe("RoomService", () => {
     expect(rematch.game?.state.gameId).not.toBe(firstGameId);
     expect(rematch.rematchPlayerIds).toEqual([]);
   });
+
+  it("routes SWAP_DICE through the command pipeline and updates both boards", () => {
+    const { rooms, host, guest } = createStartedRoom();
+    const initial = rooms.snapshotFor(host.session, () => false).game;
+    expect(initial).not.toBeNull();
+    if (!initial) return;
+    const hostId = host.session.playerId;
+    const guestId = guest.session.playerId;
+
+    // Host places on lane 0 (turn passes to guest).
+    rooms.processGameCommand(host.session, {
+      actionId: "action-host-place",
+      gameId: initial.state.gameId,
+      expectedVersion: initial.state.version,
+      command: { type: "PLACE_OWN", lane: 0 },
+    });
+    // Guest places on lane 0 (turn returns to host).
+    const guestView = rooms.snapshotFor(guest.session, () => false).game;
+    expect(guestView).not.toBeNull();
+    if (!guestView) return;
+    rooms.processGameCommand(guest.session, {
+      actionId: "action-guest-place",
+      gameId: guestView.state.gameId,
+      expectedVersion: guestView.state.version,
+      command: { type: "PLACE_OWN", lane: 0 },
+    });
+
+    const hostView = rooms.snapshotFor(host.session, () => false).game;
+    if (!hostView) throw new Error("Game missing after both placements");
+    const hostDie = hostView.state.boards[hostId]?.[0]?.[0];
+    const guestDie = hostView.state.boards[guestId]?.[0]?.[0];
+    expect(hostDie?.id).toBeTruthy();
+    expect(guestDie?.id).toBeTruthy();
+
+    const result = rooms.processGameCommand(host.session, {
+      actionId: "action-swap",
+      gameId: hostView.state.gameId,
+      expectedVersion: hostView.state.version,
+      command: {
+        type: "SWAP_DICE",
+        lane: 0,
+        ownDieId: hostDie!.id,
+        opponentDieId: guestDie!.id,
+      },
+    });
+
+    expect(result.events.map((e) => e.type)).toContain("DICE_SWAPPED");
+    const finalView = rooms.snapshotFor(host.session, () => false).game;
+    const hostBoard = finalView?.state.boards[hostId]?.[0] ?? [];
+    const guestBoard = finalView?.state.boards[guestId]?.[0] ?? [];
+    expect(hostBoard.map((d) => d.id)).toEqual([guestDie!.id]);
+    expect(guestBoard.map((d) => d.id)).toEqual([hostDie!.id]);
+  });
 });
