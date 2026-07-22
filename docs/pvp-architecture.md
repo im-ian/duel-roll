@@ -1,7 +1,7 @@
 # 방 코드 PVP 아키텍처
 
 - 상태: 현재 구현 기준선
-- 문서 버전: 0.5
+- 문서 버전: 0.6
 - 최종 검토: 2026-07-22
 
 이 문서는 [게임 규칙 명세](./game-rules.md)를 서버 권위의 2인 실시간 웹 게임으로 구현하기 위한 논리 아키텍처와 데이터 계약을 정의한다. 특정 프레임워크를 고르기 전에도 규칙 엔진, 네트워크, 저장소, UI의 책임이 섞이지 않게 하는 것이 목적이다.
@@ -180,6 +180,7 @@ WAITING_FOR_OPPONENT
 | `USE_SHIELD_ITEM` | `{}` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 현재 턴 주사위가 `NORMAL` |
 | `USE_DROP_ITEM` | `{}` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 양쪽 보드에 빈칸 |
 | `USE_DESTROY_ITEM` | `{ boardOwnerPlayerId, lane, dieId }` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 대상이 지정 보드·라인에 있는 `NORMAL` |
+| `USE_TURN_REROLL_ITEM` | `{}` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 현재 턴 주사위가 `NORMAL` |
 | `USE_PARITY_ITEM` | `{ parity: "ODD" | "EVEN" }` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 해당 수량 보유, 현재 턴 주사위가 `NORMAL` |
 | `CHOOSE_TAZZA_DIE` | `{ choice: "ORIGINAL" | "CANDIDATE" }` | 내 턴, `TAZZA_CHOICE` |
 | `PLACE_BONUS_SHIELD` | `{ boardOwnerPlayerId, lane }` | 내 턴, `BONUS_PLACEMENT`, 대상 빈칸 |
@@ -218,6 +219,7 @@ type ItemType =
   | "SHIELD"
   | "DROP"
   | "DESTROY"
+  | "TURN_REROLL"
   | DieParity;
 type ItemInventory = Record<ItemType, number>;
 
@@ -258,7 +260,7 @@ type GameResult = {
 };
 
 type GameState = {
-  schemaVersion: 3;
+  schemaVersion: 4;
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
@@ -302,6 +304,7 @@ START_GAME
        | USE_REROLL_ITEM --------------------> TURN_ACTION
        | USE_SHIELD_ITEM --------------------> TURN_ACTION
        | USE_DESTROY_ITEM -------------------> TURN_ACTION
+       | USE_TURN_REROLL_ITEM ---------------> TURN_ACTION
        | USE_PARITY_ITEM --------------------> TURN_ACTION
        | USE_DROP_ITEM ----------------------> TURN_ACTION 또는 FINISHED
        | HOLD -------------------------------+
@@ -430,6 +433,7 @@ interface DiceRng {
   "canUseShieldItem": true,
   "canUseDropItem": true,
   "canUseDestroyItem": true,
+  "canUseTurnRerollItem": false,
   "canUseOddItem": true,
   "canUseEvenItem": true,
   "ownPlacementLanes": [0, 2],
@@ -561,6 +565,7 @@ interface DiceRng {
 - 눈은 항상 `1..6`이다.
 - 실드는 제거 이벤트의 대상이 되지 않는다.
 - 실드는 아이템 및 향후 맵 효과의 대상이 되지 않는다. 모든 효과는 공통 `isDieEffectImmune` 판정을 사용한다.
+- 아이템 카탈로그의 `ITEM_TYPES`와 기본 지급 목록 `STARTING_ITEM_TYPES`는 별도이며, 카탈로그 추가만으로 새 아이템이 자동 지급되지 않는다.
 - 무작위 투하는 양쪽 보드의 빈 슬롯을 각각 균등 추첨하고, 두 배치를 모두 적용한 뒤 15칸 종료 여부를 판정한다.
 - `FINISHED` 뒤 상태는 게임 명령으로 바뀌지 않는다.
 - 저장된 점수와 보드 재계산 점수가 다를 수 없다.

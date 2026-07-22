@@ -34,6 +34,9 @@ describe("GameCommandSchema", () => {
       }).success,
     ).toBe(true);
     expect(
+      GameCommandSchema.safeParse({ type: "USE_TURN_REROLL_ITEM" }).success,
+    ).toBe(true);
+    expect(
       GameCommandSchema.safeParse({
         type: "USE_PARITY_ITEM",
         parity: "ODD",

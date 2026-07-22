@@ -9,6 +9,7 @@ export type ItemType =
   | "SHIELD"
   | "DROP"
   | "DESTROY"
+  | "TURN_REROLL"
   | DieParity;
 
 export type ItemInventory = Record<ItemType, number>;
@@ -60,7 +61,7 @@ export type GameResult = {
 };
 
 export type GameState = {
-  schemaVersion: 3;
+  schemaVersion: 4;
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
@@ -101,6 +102,7 @@ export type GameCommand =
       lane: LaneIndex;
       dieId: string;
     }
+  | { type: "USE_TURN_REROLL_ITEM" }
   | { type: "USE_PARITY_ITEM"; parity: DieParity }
   | {
       type: "CHOOSE_TAZZA_DIE";
@@ -185,6 +187,12 @@ export type GameEvent =
       die: Die;
     }
   | {
+      type: "TURN_DIE_REROLLED";
+      playerId: PlayerId;
+      previousDie: Die;
+      die: Die;
+    }
+  | {
       type: "TAZZA_SELECTED";
       playerId: PlayerId;
       die: Die;
@@ -200,6 +208,7 @@ export type LegalActions = {
   canUseShieldItem: boolean;
   canUseDropItem: boolean;
   canUseDestroyItem: boolean;
+  canUseTurnRerollItem: boolean;
   canUseOddItem: boolean;
   canUseEvenItem: boolean;
   canHold: boolean;

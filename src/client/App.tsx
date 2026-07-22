@@ -40,6 +40,7 @@ const EMPTY_INVENTORY: ItemInventory = {
   SHIELD: 0,
   DROP: 0,
   DESTROY: 0,
+  TURN_REROLL: 0,
   ODD: 0,
   EVEN: 0,
 };
@@ -267,6 +268,7 @@ function eventText(event: GameEvent, selfPlayerId: PlayerId): string {
     case "DIE_SHIELDED": return `${who(event.playerId)} 현재 주사위를 실드로 강화했습니다.`;
     case "DICE_DROPPED": return `${who(event.playerId)} 양쪽 보드에 무작위 주사위를 떨어뜨렸습니다.`;
     case "DIE_DESTROYED": return `${who(event.playerId)} ${event.boardOwnerPlayerId === selfPlayerId ? "내" : "상대"} 주사위를 파괴했습니다.`;
+    case "TURN_DIE_REROLLED": return `${who(event.playerId)} 현재 주사위를 ${event.previousDie.face}→${event.die.face}로 다시 굴렸습니다.`;
     case "TURN_DIE_PARITY_CHANGED": return `${who(event.playerId)} 현재 주사위를 ${event.parity === "ODD" ? "홀수" : "짝수"} ${event.previousDie.face}→${event.die.face}로 바꿨습니다.`;
     case "PLAYER_HELD": return `${who(event.playerId)} 홀드했습니다.`;
     case "PLAYER_SURRENDERED": return `${who(event.playerId)} 항복했습니다.`;
@@ -284,7 +286,7 @@ function RulesSheet({ onClose }: { onClose: () => void }) {
         <li><strong>15칸을 먼저 채우면 종료.</strong><span>어느 한쪽이 15칸을 채우는 즉시 현재 라인 점수로 승패를 판정합니다.</span></li>
         <li><strong>같은 눈은 알까기.</strong><span>상대 같은 라인의 동일한 일반 주사위를 전부 지우고 보너스 실드를 받습니다.</span></li>
         <li><strong>타짜는 경기당 한 번.</strong><span>현재 눈과 새 눈 중 하나를 고를 수 있습니다.</span></li>
-        <li><strong>아이템으로 판을 바꾸세요.</strong><span>교환·눈 변환·실드 강화·무작위 투하·파괴·홀수·짝수 아이템을 경기당 한 번씩 쓸 수 있습니다. 실드는 아이템과 맵 효과를 받지 않습니다.</span></li>
+        <li><strong>아이템으로 판을 바꾸세요.</strong><span>교환·눈 변환·실드 강화·무작위 투하·파괴·리롤·홀수·짝수 아이템이 있습니다. 보유한 아이템만 사용할 수 있고, 실드는 아이템과 맵 효과를 받지 않습니다.</span></li>
         <li><strong>2개 라인을 이기면 승리.</strong><span>라인 승수가 같으면 전체 점수로 판정합니다.</span></li>
       </ol>
       <button className="button button--primary" onClick={onClose}>알겠어요</button>
@@ -317,7 +319,7 @@ function GameScreen({
   const [itemMode, setItemMode] = useState<ItemMode>(null);
   const currentDie = room.game ? pendingDie(room.game.state) : null;
   const currentRollKey = currentDie && room.game
-    ? `${room.game.state.gameId}:${currentDie.id}`
+    ? `${room.game.state.gameId}:${currentDie.id}:${currentDie.face}`
     : null;
   const [revealedRollKey, setRevealedRollKey] = useState<string | null>(null);
   const gameVersion = room.game?.state.version;
@@ -390,6 +392,15 @@ function GameScreen({
       : game.legalActions.canUseDestroyItem
         ? "사용 가능"
         : "파괴할 수 있는 일반 주사위가 없습니다.";
+  const turnRerollItemStatus = state.itemUsedThisTurn
+    ? "이번 턴 사용 완료"
+    : inventory.TURN_REROLL <= 0
+      ? "보유 수량 없음"
+      : currentDie?.kind === "SHIELD"
+        ? "실드 주사위에는 사용할 수 없습니다."
+        : game.legalActions.canUseTurnRerollItem
+          ? "사용 가능"
+          : "일반 턴 주사위에만 사용할 수 있습니다.";
   const oddItemStatus = state.itemUsedThisTurn
     ? "이번 턴 사용 완료"
     : inventory.ODD <= 0
@@ -744,6 +755,23 @@ function GameScreen({
               <em>{destroyItemStatus}</em>
             </span>
             <span className="item-card__count">×{inventory.DESTROY}</span>
+          </button>
+          <button
+            className="item-card item-card--turn-reroll"
+            disabled={!game.legalActions.canUseTurnRerollItem || controlsLocked}
+            onClick={() => {
+              if (onCommand({ type: "USE_TURN_REROLL_ITEM" }, "현재 주사위 리롤 중")) {
+                setOverlay(null);
+              }
+            }}
+          >
+            <span className="item-card__icon" aria-hidden="true">⟳</span>
+            <span className="item-card__copy">
+              <strong>주사위 리롤</strong>
+              <small>현재 착수할 일반 주사위를 기존 눈과 다른 무작위 눈으로 다시 굴립니다.</small>
+              <em>{turnRerollItemStatus}</em>
+            </span>
+            <span className="item-card__count">×{inventory.TURN_REROLL}</span>
           </button>
           <button
             className="item-card item-card--odd"

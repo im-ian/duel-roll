@@ -325,6 +325,7 @@ button.target-row:not(:disabled)::after { content: ""; position: absolute; inset
 .item-card--shield { background: rgba(217,255,67,.22); }
 .item-card--drop { background: rgba(245,199,101,.2); }
 .item-card--destroy { background: rgba(255,118,95,.18); }
+.item-card--turn-reroll { background: rgba(42,199,179,.16); }
 .item-card--odd { background: rgba(85,220,226,.14); }
 .item-card--even { background: rgba(158,128,255,.14); }
 .item-card__icon { display: grid; place-items: center; width: 46px; height: 46px; border: 1.5px solid var(--ink); border-radius: 50%; background: var(--cyan); font: 900 1.45rem ui-monospace, monospace; }
@@ -333,6 +334,7 @@ button.target-row:not(:disabled)::after { content: ""; position: absolute; inset
 .item-card--shield .item-card__icon .shield-icon { width: 24px; }
 .item-card--drop .item-card__icon { background: #f5c765; }
 .item-card--destroy .item-card__icon { background: var(--coral); }
+.item-card--turn-reroll .item-card__icon { background: #2ac7b3; }
 .item-card--odd .item-card__icon { background: var(--cyan); }
 .item-card--even .item-card__icon { background: var(--violet); color: white; }
 .item-card__icon--numbers { font-size: .72rem; letter-spacing: .04em; }

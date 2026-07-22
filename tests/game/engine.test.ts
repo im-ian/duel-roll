@@ -17,6 +17,7 @@ const STARTING_INVENTORY: ItemInventory = {
   SHIELD: 1,
   DROP: 1,
   DESTROY: 1,
+  TURN_REROLL: 0,
   ODD: 1,
   EVEN: 1,
 };
@@ -723,6 +724,75 @@ describe("game engine", () => {
     },
   );
 
+  it("rerolls the current normal die to a different face without ending the turn", () => {
+    const state = activeState({
+      pendingFace: 2,
+      inventory: {
+        A: inventory({ TURN_REROLL: 1 }),
+        B: inventory(),
+      },
+      boards: {
+        A: board([], [], []),
+        B: board([die("new-attack", 5, "NORMAL", "B")], [], []),
+      },
+    });
+    expect(getLegalActions(state, "A").canUseTurnRerollItem).toBe(true);
+
+    const rerolled = applyCommand(
+      state,
+      "A",
+      { type: "USE_TURN_REROLL_ITEM" },
+      context({ differentRolls: [5] }),
+    );
+
+    expect(rerolled.state.pending).toMatchObject({
+      source: "TURN",
+      original: {
+        id: "pending",
+        face: 5,
+        kind: "NORMAL",
+        createdBy: "A",
+      },
+    });
+    expect(rerolled.state.inventory.A).toEqual(inventory({ TURN_REROLL: 0 }));
+    expect(rerolled.state.currentPlayerId).toBe("A");
+    expect(rerolled.state.itemUsedThisTurn).toBe(true);
+    expect(getLegalActions(rerolled.state, "A").alkkagiLanes).toEqual([0]);
+    expect(rerolled.events).toMatchObject([
+      {
+        type: "TURN_DIE_REROLLED",
+        playerId: "A",
+        previousDie: { face: 2 },
+        die: { face: 5 },
+      },
+    ]);
+  });
+
+  it("does not allow a turn reroll item to modify a shield die", () => {
+    const state = activeState({
+      pendingKind: "SHIELD",
+      inventory: {
+        A: inventory({ TURN_REROLL: 1 }),
+        B: inventory(),
+      },
+    });
+
+    expect(getLegalActions(state, "A").canUseTurnRerollItem).toBe(false);
+    expect(() =>
+      applyCommand(
+        state,
+        "A",
+        { type: "USE_TURN_REROLL_ITEM" },
+        context({ differentRolls: [3] }),
+      ),
+    ).toThrowError(expect.objectContaining({
+      code: "INVALID_ITEM_TARGET",
+      details: expect.objectContaining({ reason: "DIE_IS_PROTECTED" }),
+    }));
+    expect(state.inventory.A).toEqual(inventory({ TURN_REROLL: 1 }));
+    expect(state.itemUsedThisTurn).toBe(false);
+  });
+
   it("does not allow parity items to modify a shield turn die", () => {
     const state = activeState({ pendingKind: "SHIELD" });
     const legal = getLegalActions(state, "A");
@@ -768,6 +838,7 @@ describe("game engine", () => {
       canUseShieldItem: false,
       canUseDropItem: false,
       canUseDestroyItem: false,
+      canUseTurnRerollItem: false,
       canUseOddItem: false,
       canUseEvenItem: false,
       swapItemLanes: [],
@@ -803,6 +874,7 @@ describe("game engine", () => {
       canUseShieldItem: true,
       canUseDropItem: true,
       canUseDestroyItem: true,
+      canUseTurnRerollItem: false,
       canUseOddItem: true,
       canUseEvenItem: true,
     });
@@ -855,6 +927,7 @@ describe("game engine", () => {
       canUseShieldItem: true,
       canUseDropItem: true,
       canUseDestroyItem: true,
+      canUseTurnRerollItem: false,
       canUseOddItem: true,
       canUseEvenItem: true,
       swapItemLanes: [0],

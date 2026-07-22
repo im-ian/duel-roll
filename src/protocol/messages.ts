@@ -91,6 +91,7 @@ export const GameCommandSchema = z.discriminatedUnion("type", [
     lane: LaneSchema,
     dieId: DieIdSchema,
   }),
+  z.object({ type: z.literal("USE_TURN_REROLL_ITEM") }),
   z.object({
     type: z.literal("USE_PARITY_ITEM"),
     parity: z.enum(["ODD", "EVEN"]),

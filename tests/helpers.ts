@@ -105,7 +105,7 @@ export function activeState(options?: {
 }): GameState {
   const currentPlayerId = options?.currentPlayerId ?? "A";
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     gameId: "game_test",
     version: 0,
     players: ["A", "B"],
@@ -128,8 +128,26 @@ export function activeState(options?: {
     },
     tazzaUsed: options?.tazzaUsed ?? { A: false, B: false },
     inventory: options?.inventory ?? {
-      A: { SWAP: 1, REROLL: 1, SHIELD: 1, DROP: 1, DESTROY: 1, ODD: 1, EVEN: 1 },
-      B: { SWAP: 1, REROLL: 1, SHIELD: 1, DROP: 1, DESTROY: 1, ODD: 1, EVEN: 1 },
+      A: {
+        SWAP: 1,
+        REROLL: 1,
+        SHIELD: 1,
+        DROP: 1,
+        DESTROY: 1,
+        TURN_REROLL: 0,
+        ODD: 1,
+        EVEN: 1,
+      },
+      B: {
+        SWAP: 1,
+        REROLL: 1,
+        SHIELD: 1,
+        DROP: 1,
+        DESTROY: 1,
+        TURN_REROLL: 0,
+        ODD: 1,
+        EVEN: 1,
+      },
     },
     itemUsedThisTurn: options?.itemUsedThisTurn ?? false,
     held: options?.held ?? { A: false, B: false },

@@ -12,6 +12,19 @@ export const ITEM_TYPES = [
   "SHIELD",
   "DROP",
   "DESTROY",
+  "TURN_REROLL",
+  "ODD",
+  "EVEN",
+] as const satisfies readonly ItemType[];
+
+// The item catalog and starting grants are intentionally separate so future
+// rewards and loadouts do not implicitly grant every newly added item.
+export const STARTING_ITEM_TYPES = [
+  "SWAP",
+  "REROLL",
+  "SHIELD",
+  "DROP",
+  "DESTROY",
   "ODD",
   "EVEN",
 ] as const satisfies readonly ItemType[];

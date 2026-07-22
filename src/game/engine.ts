@@ -5,6 +5,7 @@ import {
   LANE_CAPACITY,
   LANE_COUNT,
   STARTING_ITEM_COUNT,
+  STARTING_ITEM_TYPES,
 } from "./constants";
 import {
   boardOf,
@@ -70,9 +71,13 @@ function availableSlotLanes(board: Board): LaneIndex[] {
 }
 
 function createStartingInventory(): ItemInventory {
-  return Object.fromEntries(
-    ITEM_TYPES.map((itemType) => [itemType, STARTING_ITEM_COUNT]),
+  const inventory = Object.fromEntries(
+    ITEM_TYPES.map((itemType) => [itemType, 0]),
   ) as ItemInventory;
+  for (const itemType of STARTING_ITEM_TYPES) {
+    inventory[itemType] = STARTING_ITEM_COUNT;
+  }
+  return inventory;
 }
 
 function dropRandomDie(
@@ -271,7 +276,7 @@ export function createGame(
     context,
   );
   const state: GameState = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     gameId: context.ids.next("game"),
     version: 0,
     players,
@@ -644,6 +649,36 @@ export function applyCommand(
       break;
     }
 
+    case "USE_TURN_REROLL_ITEM": {
+      assertPhase(state, ["TURN_ACTION"]);
+      const previousDie = activeTurnDie(state);
+      consumeItem(state, actorPlayerId, "TURN_REROLL");
+      if (isDieEffectImmune(previousDie)) {
+        throw new RuleError(
+          "INVALID_ITEM_TARGET",
+          "Shield dice cannot be targeted by turn reroll items.",
+          { itemType: "TURN_REROLL", reason: "DIE_IS_PROTECTED" },
+        );
+      }
+
+      const face = context.rng.rollDifferentFace(previousDie.face);
+      if (face === previousDie.face) {
+        throw new RuleError(
+          "INVARIANT_VIOLATION",
+          "Turn reroll item must produce a different face.",
+        );
+      }
+      const rerolledDie: Die = { ...previousDie, face };
+      state.pending = { source: "TURN", original: rerolledDie };
+      events.push({
+        type: "TURN_DIE_REROLLED",
+        playerId: actorPlayerId,
+        previousDie,
+        die: rerolledDie,
+      });
+      break;
+    }
+
     case "USE_PARITY_ITEM": {
       assertPhase(state, ["TURN_ACTION"]);
       const previousDie = activeTurnDie(state);
@@ -768,6 +803,7 @@ export function getLegalActions(
     canUseShieldItem: false,
     canUseDropItem: false,
     canUseDestroyItem: false,
+    canUseTurnRerollItem: false,
     canUseOddItem: false,
     canUseEvenItem: false,
     canHold: false,
@@ -841,6 +877,8 @@ export function getLegalActions(
           (playerId) => availableSlotLanes(boardOf(state, playerId)).length > 0,
         );
       const canChangePending = !isDieEffectImmune(state.pending.original);
+      legal.canUseTurnRerollItem =
+        inventory.TURN_REROLL > 0 && canChangePending;
       legal.canUseOddItem = inventory.ODD > 0 && canChangePending;
       legal.canUseEvenItem = inventory.EVEN > 0 && canChangePending;
     }
