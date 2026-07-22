@@ -358,21 +358,21 @@ function GameScreen({
   const swapItemStatus = state.itemUsedThisTurn
     ? "이번 턴 사용 완료"
     : inventory.SWAP <= 0
-      ? "소진됨"
+      ? "보유 수량 없음"
       : game.legalActions.canUseSwapItem
         ? "사용 가능"
         : "같은 라인에 교환 가능한 일반 주사위가 없습니다.";
   const rerollItemStatus = state.itemUsedThisTurn
     ? "이번 턴 사용 완료"
     : inventory.REROLL <= 0
-      ? "소진됨"
+      ? "보유 수량 없음"
       : game.legalActions.canUseRerollItem
         ? "사용 가능"
         : "변환 가능한 일반 주사위가 없습니다.";
   const shieldItemStatus = state.itemUsedThisTurn
     ? "이번 턴 사용 완료"
     : inventory.SHIELD <= 0
-      ? "소진됨"
+      ? "보유 수량 없음"
       : currentDie?.kind === "SHIELD"
         ? "현재 주사위가 이미 실드입니다."
         : game.legalActions.canUseShieldItem
@@ -381,14 +381,14 @@ function GameScreen({
   const dropItemStatus = state.itemUsedThisTurn
     ? "이번 턴 사용 완료"
     : inventory.DROP <= 0
-      ? "소진됨"
+      ? "보유 수량 없음"
       : game.legalActions.canUseDropItem
         ? "사용 가능"
         : "양쪽 보드에 빈칸이 필요합니다.";
   const destroyItemStatus = state.itemUsedThisTurn
     ? "이번 턴 사용 완료"
     : inventory.DESTROY <= 0
-      ? "소진됨"
+      ? "보유 수량 없음"
       : game.legalActions.canUseDestroyItem
         ? "사용 가능"
         : "파괴할 수 있는 일반 주사위가 없습니다.";
@@ -404,7 +404,7 @@ function GameScreen({
   const oddItemStatus = state.itemUsedThisTurn
     ? "이번 턴 사용 완료"
     : inventory.ODD <= 0
-      ? "소진됨"
+      ? "보유 수량 없음"
       : currentDie?.kind === "SHIELD"
         ? "실드 주사위에는 사용할 수 없습니다."
         : game.legalActions.canUseOddItem
@@ -413,7 +413,7 @@ function GameScreen({
   const evenItemStatus = state.itemUsedThisTurn
     ? "이번 턴 사용 완료"
     : inventory.EVEN <= 0
-      ? "소진됨"
+      ? "보유 수량 없음"
       : currentDie?.kind === "SHIELD"
         ? "실드 주사위에는 사용할 수 없습니다."
         : game.legalActions.canUseEvenItem

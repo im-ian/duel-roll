@@ -12,6 +12,17 @@ import type { ItemInventory } from "../../src/game/types";
 import { activeState, board, context, die } from "../helpers";
 
 const STARTING_INVENTORY: ItemInventory = {
+  SWAP: 0,
+  REROLL: 0,
+  SHIELD: 1,
+  DROP: 0,
+  DESTROY: 1,
+  TURN_REROLL: 0,
+  ODD: 1,
+  EVEN: 1,
+};
+
+const STOCKED_INVENTORY: ItemInventory = {
   SWAP: 1,
   REROLL: 1,
   SHIELD: 1,
@@ -23,7 +34,7 @@ const STARTING_INVENTORY: ItemInventory = {
 };
 
 function inventory(overrides: Partial<ItemInventory> = {}): ItemInventory {
-  return { ...STARTING_INVENTORY, ...overrides };
+  return { ...STOCKED_INVENTORY, ...overrides };
 }
 
 function fullLane(prefix: string, createdBy = "A") {
@@ -57,8 +68,8 @@ describe("game engine", () => {
       original: { face: 4, kind: "SHIELD", createdBy: "B" },
     });
     expect(transition.state.inventory).toEqual({
-      A: inventory(),
-      B: inventory(),
+      A: STARTING_INVENTORY,
+      B: STARTING_INVENTORY,
     });
     expect(transition.state.itemUsedThisTurn).toBe(false);
     expect(transition.events.map((event) => event.type)).toEqual([

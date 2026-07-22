@@ -20,10 +20,7 @@ export const ITEM_TYPES = [
 // The item catalog and starting grants are intentionally separate so future
 // rewards and loadouts do not implicitly grant every newly added item.
 export const STARTING_ITEM_TYPES = [
-  "SWAP",
-  "REROLL",
   "SHIELD",
-  "DROP",
   "DESTROY",
   "ODD",
   "EVEN",
