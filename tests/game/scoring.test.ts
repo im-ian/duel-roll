@@ -10,6 +10,15 @@ describe("scoreLane", () => {
       scoreLane([die("a", 5), die("b", 5), die("c", 5)]),
     ).toBe(25);
     expect(
+      scoreLane([
+        die("a", 5),
+        die("b", 5),
+        die("c", 5),
+        die("d", 5),
+        die("e", 5),
+      ]),
+    ).toBe(45);
+    expect(
       scoreLane([die("a", 5), die("b", 5), die("c", 2)]),
     ).toBe(17);
   });

@@ -1,4 +1,6 @@
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { LANE_CAPACITY } from "../game/constants";
 import type { Die, LaneIndex } from "../game";
 
 const PIPS: Record<Die["face"], number[]> = {
@@ -9,6 +11,14 @@ const PIPS: Record<Die["face"], number[]> = {
   5: [0, 2, 4, 6, 8],
   6: [0, 2, 3, 5, 6, 8],
 };
+
+const DIE_ROLL_DURATION_MS = 720;
+const DIE_ROLL_FRAME_MS = 72;
+const ROLLING_FACES: Die["face"][] = [2, 5, 1, 6, 3, 4];
+
+function rollingFace(finalFace: Die["face"], frame: number): Die["face"] {
+  return ROLLING_FACES[(finalFace + frame * 5) % ROLLING_FACES.length] ?? finalFace;
+}
 
 export function ShieldIcon() {
   return (
@@ -23,17 +33,19 @@ export function DieView({
   die,
   large = false,
   muted = false,
+  ariaLabel,
 }: {
   die: Die;
   large?: boolean;
   muted?: boolean;
+  ariaLabel?: string;
 }) {
   return (
     <div
       className={`die ${large ? "die--large" : ""} ${
         die.kind === "SHIELD" ? "die--shield" : ""
       } ${muted ? "die--muted" : ""}`}
-      aria-label={`${die.face} 눈${die.kind === "SHIELD" ? " 실드" : ""}`}
+      aria-label={ariaLabel ?? `${die.face} 눈${die.kind === "SHIELD" ? " 실드" : ""}`}
     >
       <span className="die__grid" aria-hidden="true">
         {Array.from({ length: 9 }, (_, index) => (
@@ -49,37 +61,95 @@ export function DieView({
   );
 }
 
+export function RollingDieView({
+  die,
+  onComplete,
+}: {
+  die: Die;
+  onComplete: () => void;
+}) {
+  const completionRef = useRef(onComplete);
+  const [visibleFace, setVisibleFace] = useState<Die["face"]>(() =>
+    rollingFace(die.face, 0),
+  );
+  const [rolling, setRolling] = useState(true);
+
+  useEffect(() => {
+    completionRef.current = onComplete;
+  }, [onComplete]);
+
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setVisibleFace(die.face);
+      setRolling(false);
+      completionRef.current();
+      return;
+    }
+
+    let frame = 0;
+    setRolling(true);
+    setVisibleFace(rollingFace(die.face, frame));
+    const frameTimer = window.setInterval(() => {
+      frame += 1;
+      setVisibleFace(rollingFace(die.face, frame));
+    }, DIE_ROLL_FRAME_MS);
+    const finishTimer = window.setTimeout(() => {
+      window.clearInterval(frameTimer);
+      setVisibleFace(die.face);
+      setRolling(false);
+      completionRef.current();
+    }, DIE_ROLL_DURATION_MS);
+
+    return () => {
+      window.clearInterval(frameTimer);
+      window.clearTimeout(finishTimer);
+    };
+  }, [die.face, die.id]);
+
+  return (
+    <div className={`rolling-die ${rolling ? "rolling-die--active" : ""}`} data-rolling={rolling}>
+      <DieView
+        die={{ ...die, face: visibleFace }}
+        large
+        ariaLabel={rolling ? "주사위 굴리는 중" : undefined}
+      />
+    </div>
+  );
+}
+
 export function DiceRow({
   dice,
-  pickable = false,
-  selectedId,
-  onPick,
+  selectableDieIds,
+  selectedDieId,
+  disabled,
+  onDieClick,
 }: {
   dice: Die[];
-  pickable?: boolean;
-  selectedId?: string;
-  onPick?: (dieId: string) => void;
+  selectableDieIds?: ReadonlySet<string>;
+  selectedDieId?: string;
+  disabled?: boolean;
+  onDieClick?: (die: Die) => void;
 }) {
   return (
     <div className="dice-row">
       {dice.map((die) => {
-        const isSelected = selectedId === die.id;
-        if (pickable && onPick) {
-          return (
-            <button
-              type="button"
-              key={die.id}
-              className={`die-button ${isSelected ? "die-button--selected" : ""}`}
-              onClick={() => onPick(die.id)}
-              aria-pressed={isSelected}
-            >
-              <DieView die={die} />
-            </button>
-          );
-        }
-        return <DieView key={die.id} die={die} />;
+        const selectable = selectableDieIds?.has(die.id) && onDieClick;
+        if (!selectable) return <DieView key={die.id} die={die} />;
+        return (
+          <button
+            key={die.id}
+            type="button"
+            className={`die-target ${selectedDieId === die.id ? "die-target--selected" : ""}`}
+            disabled={disabled}
+            onClick={() => onDieClick(die)}
+            aria-label={`${die.kind === "SHIELD" ? "실드" : "일반"} 주사위 ${die.face} 선택`}
+            aria-pressed={selectedDieId === die.id}
+          >
+            <DieView die={die} />
+          </button>
+        );
       })}
-      {Array.from({ length: 3 - dice.length }, (_, index) => (
+      {Array.from({ length: Math.max(0, LANE_CAPACITY - dice.length) }, (_, index) => (
         <span className="die-slot" key={`empty-${index}`} aria-hidden="true" />
       ))}
     </div>
@@ -91,12 +161,12 @@ type TargetRowProps = {
   score: number;
   dice: Die[];
   action?: string;
-  tone?: "place" | "attack" | "bonus" | "swap";
+  tone?: "place" | "attack" | "bonus";
   disabled?: boolean;
   onClick?: () => void;
-  dicePickable?: boolean;
-  diceSelectedId?: string;
-  onPickDie?: (dieId: string) => void;
+  selectableDieIds?: ReadonlySet<string>;
+  selectedDieId?: string;
+  onDieClick?: (die: Die) => void;
 };
 
 export function TargetRow({
@@ -107,24 +177,25 @@ export function TargetRow({
   tone,
   disabled,
   onClick,
-  dicePickable,
-  diceSelectedId,
-  onPickDie,
+  selectableDieIds,
+  selectedDieId,
+  onDieClick,
 }: TargetRowProps) {
   const contents = (
     <>
       <span className="target-row__label">{label}</span>
       <DiceRow
         dice={dice}
-        pickable={dicePickable}
-        selectedId={diceSelectedId}
-        onPick={onPickDie}
+        selectableDieIds={selectableDieIds}
+        selectedDieId={selectedDieId}
+        disabled={disabled}
+        onDieClick={onDieClick}
       />
       <span className="target-row__score">{score}</span>
       {action && <span className="target-row__action">{action}</span>}
     </>
   );
-  if (onClick) {
+  if (onClick && !onDieClick) {
     return (
       <button
         type="button"
@@ -148,26 +219,26 @@ export function LaneCard({
   ownScore,
   opponentAction,
   ownAction,
-  swapMode = false,
-  selectedOpponentDieId,
-  selectedOwnDieId,
-  onPickOpponentDie,
-  onPickOwnDie,
   disabled,
+  opponentSelectableDieIds,
+  ownSelectableDieIds,
+  selectedDieId,
+  onOpponentDieClick,
+  onOwnDieClick,
 }: {
   lane: LaneIndex;
   opponentDice: Die[];
   ownDice: Die[];
   opponentScore: number;
   ownScore: number;
-  opponentAction?: { label: string; tone: "attack" | "bonus" | "swap"; run: () => void };
-  ownAction?: { label: string; tone: "place" | "bonus" | "swap"; run: () => void };
-  swapMode?: boolean;
-  selectedOpponentDieId?: string;
-  selectedOwnDieId?: string;
-  onPickOpponentDie?: (dieId: string) => void;
-  onPickOwnDie?: (dieId: string) => void;
+  opponentAction?: { label: string; tone: "attack" | "bonus"; run: () => void };
+  ownAction?: { label: string; tone: "place" | "bonus"; run: () => void };
   disabled?: boolean;
+  opponentSelectableDieIds?: ReadonlySet<string>;
+  ownSelectableDieIds?: ReadonlySet<string>;
+  selectedDieId?: string;
+  onOpponentDieClick?: (die: Die) => void;
+  onOwnDieClick?: (die: Die) => void;
 }) {
   const difference = ownScore - opponentScore;
   const verdict =
@@ -177,10 +248,7 @@ export function LaneCard({
         ? `상대가 +${Math.abs(difference)}`
         : "동률";
   return (
-    <section
-      className={`lane-card ${swapMode ? "lane-card--swap" : ""}`}
-      aria-label={`${lane + 1}번 라인`}
-    >
+    <section className="lane-card" aria-label={`${lane + 1}번 라인`}>
       <header className="lane-card__header">
         <span>LINE 0{lane + 1}</span>
         <span className={difference > 0 ? "ahead" : difference < 0 ? "behind" : ""}>
@@ -195,9 +263,9 @@ export function LaneCard({
         tone={opponentAction?.tone}
         disabled={disabled}
         onClick={opponentAction?.run}
-        dicePickable={swapMode}
-        diceSelectedId={selectedOpponentDieId}
-        onPickDie={onPickOpponentDie}
+        selectableDieIds={opponentSelectableDieIds}
+        selectedDieId={selectedDieId}
+        onDieClick={onOpponentDieClick}
       />
       <TargetRow
         label="나"
@@ -207,9 +275,9 @@ export function LaneCard({
         tone={ownAction?.tone}
         disabled={disabled}
         onClick={ownAction?.run}
-        dicePickable={swapMode}
-        diceSelectedId={selectedOwnDieId}
-        onPickDie={onPickOwnDie}
+        selectableDieIds={ownSelectableDieIds}
+        selectedDieId={selectedDieId}
+        onDieClick={onOwnDieClick}
       />
     </section>
   );

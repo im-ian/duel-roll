@@ -1,7 +1,7 @@
 # 방 코드 PVP 아키텍처
 
-- 상태: MVP 구현 기준선
-- 문서 버전: 0.1
+- 상태: 현재 구현 기준선
+- 문서 버전: 0.6
 - 최종 검토: 2026-07-22
 
 이 문서는 [게임 규칙 명세](./game-rules.md)를 서버 권위의 2인 실시간 웹 게임으로 구현하기 위한 논리 아키텍처와 데이터 계약을 정의한다. 특정 프레임워크를 고르기 전에도 규칙 엔진, 네트워크, 저장소, UI의 책임이 섞이지 않게 하는 것이 목적이다.
@@ -33,7 +33,7 @@
 1. **서버가 유일한 판정자다.** 클라이언트는 행동 의도만 보내고 주사위 값, 제거 결과, 점수, 다음 턴을 결정하지 않는다.
 2. **규칙 엔진은 순수하게 유지한다.** 네트워크, DB, WebSocket 연결 상태, 시스템 시계에 직접 접근하지 않는다.
 3. **방 코드는 인증 수단이 아니다.** 방을 찾는 공개 식별자와 좌석을 되찾는 비공개 세션 자격을 분리한다.
-4. **작은 전체 스냅샷을 활용한다.** 보드가 최대 18개 주사위뿐이므로, 승인된 행동마다 이벤트와 최신 스냅샷을 함께 보내 복구를 단순하게 한다.
+4. **작은 전체 스냅샷을 활용한다.** 양쪽 보드를 합쳐 최대 30개 주사위뿐이므로, 승인된 행동마다 이벤트와 최신 스냅샷을 함께 보내 복구를 단순하게 한다.
 5. **버전과 멱등성을 기본값으로 둔다.** 모든 게임 명령에 `expectedVersion`과 `actionId`를 넣어 중복 탭, 재전송, 늦게 도착한 패킷을 안전하게 처리한다.
 6. **화면 방향과 게임 좌표를 분리한다.** 서버의 플레이어 ID와 라인 `0..2`는 고정하며, 각 클라이언트는 자신을 편한 위치에 그린다.
 
@@ -175,6 +175,13 @@ WAITING_FOR_OPPONENT
 | `PLACE_OWN` | `{ lane }` | 내 턴, `TURN_ACTION`, 내 라인 빈칸 |
 | `ALKKAGI` | `{ lane }` | 내 턴, 같은 라인 빈칸, 상대 동일 눈 일반 주사위 |
 | `USE_TAZZA` | `{}` | 내 턴, `TURN_ACTION`, 미사용, 턴 주사위(최초 실드 포함, 보너스 실드 제외) |
+| `USE_SWAP_ITEM` | `{ lane, ownDieId, opponentDieId }` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 두 대상이 같은 라인의 양쪽 보드에 있는 `NORMAL` |
+| `USE_REROLL_ITEM` | `{ boardOwnerPlayerId, lane, dieId }` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 대상이 지정 보드·라인에 있는 `NORMAL` |
+| `USE_SHIELD_ITEM` | `{}` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 현재 턴 주사위가 `NORMAL` |
+| `USE_DROP_ITEM` | `{}` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 양쪽 보드에 빈칸 |
+| `USE_DESTROY_ITEM` | `{ boardOwnerPlayerId, lane, dieId }` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 대상이 지정 보드·라인에 있는 `NORMAL` |
+| `USE_TURN_REROLL_ITEM` | `{}` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 현재 턴 주사위가 `NORMAL` |
+| `USE_PARITY_ITEM` | `{ parity: "ODD" | "EVEN" }` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 해당 수량 보유, 현재 턴 주사위가 `NORMAL` |
 | `CHOOSE_TAZZA_DIE` | `{ choice: "ORIGINAL" | "CANDIDATE" }` | 내 턴, `TAZZA_CHOICE` |
 | `PLACE_BONUS_SHIELD` | `{ boardOwnerPlayerId, lane }` | 내 턴, `BONUS_PLACEMENT`, 대상 빈칸 |
 | `HOLD` | `{}` | 내 턴, `TURN_ACTION` 또는 `TAZZA_CHOICE` |
@@ -205,6 +212,16 @@ type PlayerId = string;
 type LaneIndex = 0 | 1 | 2;
 type DieFace = 1 | 2 | 3 | 4 | 5 | 6;
 type DieKind = "NORMAL" | "SHIELD";
+type DieParity = "ODD" | "EVEN";
+type ItemType =
+  | "SWAP"
+  | "REROLL"
+  | "SHIELD"
+  | "DROP"
+  | "DESTROY"
+  | "TURN_REROLL"
+  | DieParity;
+type ItemInventory = Record<ItemType, number>;
 
 type Die = {
   id: string;
@@ -218,8 +235,8 @@ type Board = [Die[], Die[], Die[]];
 type TurnPending =
   | {
       source: "TURN";
-      die: Die;
-      candidateFace?: DieFace;
+      original: Die;
+      candidate?: Die;
     }
   | {
       source: "BONUS";
@@ -243,8 +260,7 @@ type GameResult = {
 };
 
 type GameState = {
-  schemaVersion: 1;
-  rulesVersion: "1";
+  schemaVersion: 4;
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
@@ -255,6 +271,8 @@ type GameState = {
   boards: Record<PlayerId, Board>;
   pending: TurnPending | null;
   tazzaUsed: Record<PlayerId, boolean>;
+  inventory: Record<PlayerId, ItemInventory>;
+  itemUsedThisTurn: boolean;
   held: Record<PlayerId, boolean>;
   result: GameResult | null;
 };
@@ -282,9 +300,20 @@ START_GAME
        | PLACE_OWN --------------------------+
        | ALKKAGI -> ROLL_BONUS -> BONUS_PLACEMENT
        | USE_TAZZA -> TAZZA_CHOICE -> TURN_ACTION
+       | USE_SWAP_ITEM ----------------------> TURN_ACTION
+       | USE_REROLL_ITEM --------------------> TURN_ACTION
+       | USE_SHIELD_ITEM --------------------> TURN_ACTION
+       | USE_DESTROY_ITEM -------------------> TURN_ACTION
+       | USE_TURN_REROLL_ITEM ---------------> TURN_ACTION
+       | USE_PARITY_ITEM --------------------> TURN_ACTION
+       | USE_DROP_ITEM ----------------------> TURN_ACTION 또는 FINISHED
        | HOLD -------------------------------+
        | SURRENDER -> FINISHED                |
                                                v
+                                     CHECK_BOARD_COMPLETE
+                                        | 한쪽 15개 -> FINISHED
+                                        | 미완성
+                                        v
                                       ADVANCE_OR_FINISH
                                         | 다음 플레이어 존재
                                         v
@@ -295,18 +324,19 @@ START_GAME
 
 BONUS_PLACEMENT
   -> PLACE_BONUS_SHIELD
-  -> ADVANCE_OR_FINISH
+  -> CHECK_BOARD_COMPLETE
+  -> ADVANCE_OR_FINISH 또는 FINISHED
 ```
 
 ### 다음 플레이어 선택
 
 ```ts
 function isEligible(state: GameState, playerId: PlayerId): boolean {
-  return !state.held[playerId] && countDice(state.boards[playerId]) < 9;
+  return !state.held[playerId] && countDice(state.boards[playerId]) < 15;
 }
 ```
 
-행동 뒤 상대를 먼저 검사하고, 상대가 불가능하면 현재 플레이어를 검사한다. 둘 다 불가능하면 결과를 계산한다. 이 전이는 알까기로 가득 찬 보드가 다시 열리는 경우까지 같은 로직으로 처리한다.
+턴을 끝내는 배치 뒤 어느 한쪽이라도 15개를 채웠는지 먼저 검사한다. 완성된 보드가 있으면 다음 주사위를 굴리지 않고 즉시 결과를 계산한다. 미완성일 때만 상대를 먼저 검사하고, 상대가 불가능하면 현재 플레이어를 검사한다. 둘 다 불가능하면 결과를 계산한다.
 
 ## 9. 순수 규칙 엔진 계약
 
@@ -362,19 +392,21 @@ function applyCommand(
 
 ## 11. 난수
 
-서버 RNG 인터페이스를 세 동작으로 분리한다.
+서버 RNG 인터페이스를 네 동작으로 분리한다.
 
 ```ts
 interface DiceRng {
   chooseFirstPlayer(players: [PlayerId, PlayerId]): PlayerId;
   rollD6(): DieFace;
   rollDifferentFace(excluded: DieFace): DieFace;
+  pickIndex(upperBound: number): number;
 }
 ```
 
 - 운영 환경은 암호학적으로 안전한 난수 생성기를 사용한다.
 - 범위 변환에는 modulo bias가 없는 표준 `randomInt` 계열 API를 사용한다.
 - `rollDifferentFace`는 제외한 눈 이외의 5개를 정확히 같은 확률로 반환한다.
+- `pickIndex`는 `0..upperBound-1`을 편향 없이 반환하며 무작위 빈 슬롯과 홀짝 후보 선택에 사용한다.
 - 테스트에서는 미리 정한 값을 순서대로 반환하는 RNG를 주입한다.
 - 클라이언트가 난수, seed, 주사위 결과를 제안하지 않는다.
 - 이벤트 로그에는 확정된 결과와 원인이 된 명령을 남긴다.
@@ -396,8 +428,25 @@ interface DiceRng {
 ```json
 {
   "canUseTazza": true,
+  "canUseSwapItem": true,
+  "canUseRerollItem": true,
+  "canUseShieldItem": true,
+  "canUseDropItem": true,
+  "canUseDestroyItem": true,
+  "canUseTurnRerollItem": false,
+  "canUseOddItem": true,
+  "canUseEvenItem": true,
   "ownPlacementLanes": [0, 2],
   "alkkagiLanes": [1],
+  "swapItemLanes": [0],
+  "rerollItemTargets": [
+    { "boardOwnerPlayerId": "player-a", "lane": 0, "dieId": "die-7" },
+    { "boardOwnerPlayerId": "player-b", "lane": 2, "dieId": "die-11" }
+  ],
+  "destroyItemTargets": [
+    { "boardOwnerPlayerId": "player-a", "lane": 0, "dieId": "die-7" },
+    { "boardOwnerPlayerId": "player-b", "lane": 2, "dieId": "die-11" }
+  ],
   "bonusTargets": []
 }
 ```
@@ -478,6 +527,9 @@ interface DiceRng {
 | `LANE_FULL` | 대상 라인에 빈칸 없음 | 하이라이트 갱신 |
 | `ALKKAGI_NOT_AVAILABLE` | 제거 대상 또는 내 빈칸 없음 | 공격 하이라이트 갱신 |
 | `TAZZA_ALREADY_USED` | 사용권 소진 | 버튼 비활성화 |
+| `ITEM_ALREADY_USED_THIS_TURN` | 현재 턴에 아이템 사용 완료 | 인벤토리 대상 선택 종료, 다음 턴까지 비활성화 |
+| `ITEM_NOT_AVAILABLE` | 해당 아이템 수량 없음 | 수량 갱신 후 아이템 비활성화 |
+| `INVALID_ITEM_TARGET` | 대상 주사위가 지정 보드·라인에 없거나 교환 라인이 다름 | 최신 스냅샷으로 타깃 강조 갱신 |
 | `STALE_VERSION` | 이전 상태를 기준으로 보냄 | 응답 스냅샷으로 교체 |
 | `DUPLICATE_ACTION_MISMATCH` | 같은 `actionId`에 다른 payload | 요청 중단, 진단 기록 |
 | `GAME_FINISHED` | 종료 뒤 게임 명령 | 결과 화면 유지 |
@@ -501,20 +553,25 @@ interface DiceRng {
 
 ### 규칙 단위 테스트
 
-- [게임 규칙 명세의 구현 수용 테스트](./game-rules.md#12-구현-수용-테스트)를 테이블 기반으로 구현한다.
-- 스크립트 RNG로 선공, 일반 눈, 타짜 후보, 보너스 눈을 고정한다.
+- [게임 규칙 명세의 구현 수용 테스트](./game-rules.md#13-구현-수용-테스트)를 테이블 기반으로 구현한다.
+- 스크립트 RNG로 선공, 일반 눈, 타짜 후보, 보너스 눈, 빈 슬롯 인덱스와 홀짝 후보 인덱스를 고정한다.
 - 점수, 합법 행동 selector, 다음 플레이어, 승패 판정을 각각 독립 테스트한다.
 
 ### 속성 테스트
 
 임의의 합법 명령 시퀀스 뒤에 아래 속성을 검사한다.
 
-- 라인 길이는 절대 3을 넘지 않는다.
+- 라인 길이는 절대 5를 넘지 않는다.
 - 눈은 항상 `1..6`이다.
 - 실드는 제거 이벤트의 대상이 되지 않는다.
+- 실드는 아이템 및 향후 맵 효과의 대상이 되지 않는다. 모든 효과는 공통 `isDieEffectImmune` 판정을 사용한다.
+- 아이템 카탈로그의 `ITEM_TYPES`와 기본 지급 목록 `STARTING_ITEM_TYPES`는 별도이며, 카탈로그 추가만으로 새 아이템이 자동 지급되지 않는다.
+- 무작위 투하는 양쪽 보드의 빈 슬롯을 각각 균등 추첨하고, 두 배치를 모두 적용한 뒤 15칸 종료 여부를 판정한다.
 - `FINISHED` 뒤 상태는 게임 명령으로 바뀌지 않는다.
 - 저장된 점수와 보드 재계산 점수가 다를 수 없다.
+- 활성 상태에는 15개를 채운 보드가 남을 수 없고, 15번째 배치 전이는 반드시 `FINISHED`로 끝난다.
 - 같은 상태·명령·스크립트 RNG는 같은 전이 결과를 만든다.
+- 아이템 명령 뒤 pending 턴 주사위와 현재 플레이어는 유지되고, 같은 턴의 두 번째 아이템은 거절된다. 단, 무작위 투하로 15칸을 완성한 경우는 즉시 종료한다.
 
 ### 애플리케이션 통합 테스트
 
@@ -547,7 +604,7 @@ interface DiceRng {
 - 평균 경기 시간과 턴 수
 - 선공/후공 승률
 
-규칙 변경 시 `rulesVersion`을 경기 기록에 남겨 서로 다른 버전의 통계를 섞지 않는다.
+현재 메모리 MVP의 `GameState`에는 별도 규칙 버전을 저장하지 않는다. 영속 리플레이나 장기 통계를 도입할 때 당시 규칙 식별자를 로그 메타데이터로 추가한다.
 
 ## 19. 권장 구현 순서
 

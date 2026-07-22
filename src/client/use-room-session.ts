@@ -37,6 +37,9 @@ function friendlyError(error: unknown): string {
       NOT_YOUR_TURN: "지금은 상대 차례입니다.",
       LANE_FULL: "해당 라인에는 빈칸이 없습니다.",
       ALKKAGI_NOT_AVAILABLE: "지금은 그 라인을 공격할 수 없습니다.",
+      ITEM_ALREADY_USED_THIS_TURN: "이번 턴에는 이미 아이템을 사용했습니다.",
+      ITEM_NOT_AVAILABLE: "해당 아이템을 모두 사용했습니다.",
+      INVALID_ITEM_TARGET: "선택한 주사위에는 이 아이템을 사용할 수 없습니다.",
     };
     return byCode[error.code] ?? error.message;
   }
