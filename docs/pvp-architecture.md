@@ -1,7 +1,7 @@
 # 방 코드 PVP 아키텍처
 
 - 상태: 현재 구현 기준선
-- 문서 버전: 0.3
+- 문서 버전: 0.4
 - 최종 검토: 2026-07-22
 
 이 문서는 [게임 규칙 명세](./game-rules.md)를 서버 권위의 2인 실시간 웹 게임으로 구현하기 위한 논리 아키텍처와 데이터 계약을 정의한다. 특정 프레임워크를 고르기 전에도 규칙 엔진, 네트워크, 저장소, UI의 책임이 섞이지 않게 하는 것이 목적이다.
@@ -175,8 +175,9 @@ WAITING_FOR_OPPONENT
 | `PLACE_OWN` | `{ lane }` | 내 턴, `TURN_ACTION`, 내 라인 빈칸 |
 | `ALKKAGI` | `{ lane }` | 내 턴, 같은 라인 빈칸, 상대 동일 눈 일반 주사위 |
 | `USE_TAZZA` | `{}` | 내 턴, `TURN_ACTION`, 미사용, 턴 주사위(최초 실드 포함, 보너스 실드 제외) |
-| `USE_SWAP_ITEM` | `{ lane, ownDieId, opponentDieId }` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 두 대상이 같은 라인의 양쪽 보드에 존재 |
-| `USE_REROLL_ITEM` | `{ boardOwnerPlayerId, lane, dieId }` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 대상이 지정 보드·라인에 존재 |
+| `USE_SWAP_ITEM` | `{ lane, ownDieId, opponentDieId }` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 두 대상이 같은 라인의 양쪽 보드에 있는 `NORMAL` |
+| `USE_REROLL_ITEM` | `{ boardOwnerPlayerId, lane, dieId }` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 대상이 지정 보드·라인에 있는 `NORMAL` |
+| `USE_SHIELD_ITEM` | `{}` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 현재 턴 주사위가 `NORMAL` |
 | `CHOOSE_TAZZA_DIE` | `{ choice: "ORIGINAL" | "CANDIDATE" }` | 내 턴, `TAZZA_CHOICE` |
 | `PLACE_BONUS_SHIELD` | `{ boardOwnerPlayerId, lane }` | 내 턴, `BONUS_PLACEMENT`, 대상 빈칸 |
 | `HOLD` | `{}` | 내 턴, `TURN_ACTION` 또는 `TAZZA_CHOICE` |
@@ -207,7 +208,7 @@ type PlayerId = string;
 type LaneIndex = 0 | 1 | 2;
 type DieFace = 1 | 2 | 3 | 4 | 5 | 6;
 type DieKind = "NORMAL" | "SHIELD";
-type ItemType = "SWAP" | "REROLL";
+type ItemType = "SWAP" | "REROLL" | "SHIELD";
 type ItemInventory = Record<ItemType, number>;
 
 type Die = {
@@ -248,7 +249,7 @@ type GameResult = {
 
 type GameState = {
   schemaVersion: 2;
-  rulesVersion: "3";
+  rulesVersion: "4";
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
@@ -290,6 +291,7 @@ START_GAME
        | USE_TAZZA -> TAZZA_CHOICE -> TURN_ACTION
        | USE_SWAP_ITEM ----------------------> TURN_ACTION
        | USE_REROLL_ITEM --------------------> TURN_ACTION
+       | USE_SHIELD_ITEM --------------------> TURN_ACTION
        | HOLD -------------------------------+
        | SURRENDER -> FINISHED                |
                                                v
@@ -411,6 +413,7 @@ interface DiceRng {
   "canUseTazza": true,
   "canUseSwapItem": true,
   "canUseRerollItem": true,
+  "canUseShieldItem": true,
   "ownPlacementLanes": [0, 2],
   "alkkagiLanes": [1],
   "swapItemLanes": [0],
@@ -535,6 +538,7 @@ interface DiceRng {
 - 라인 길이는 절대 5를 넘지 않는다.
 - 눈은 항상 `1..6`이다.
 - 실드는 제거 이벤트의 대상이 되지 않는다.
+- 실드는 아이템 및 향후 맵 효과의 대상이 되지 않는다. 모든 효과는 공통 `isDieEffectImmune` 판정을 사용한다.
 - `FINISHED` 뒤 상태는 게임 명령으로 바뀌지 않는다.
 - 저장된 점수와 보드 재계산 점수가 다를 수 없다.
 - 활성 상태에는 15개를 채운 보드가 남을 수 없고, 15번째 배치 전이는 반드시 `FINISHED`로 끝난다.

@@ -251,6 +251,7 @@ function eventText(event: GameEvent, selfPlayerId: PlayerId): string {
     case "TAZZA_USED": return `${who(event.playerId)} 타짜를 사용했습니다.`;
     case "DICE_SWAPPED": return `${who(event.playerId)} ${event.lane + 1}번 라인의 주사위를 교환했습니다.`;
     case "DIE_REROLLED": return `${who(event.playerId)} ${event.boardOwnerPlayerId === selfPlayerId ? "내" : "상대"} 주사위를 ${event.previousDie.face}→${event.die.face}로 변환했습니다.`;
+    case "DIE_SHIELDED": return `${who(event.playerId)} 현재 주사위를 실드로 강화했습니다.`;
     case "PLAYER_HELD": return `${who(event.playerId)} 홀드했습니다.`;
     case "PLAYER_SURRENDERED": return `${who(event.playerId)} 항복했습니다.`;
     case "GAME_FINISHED": return "경기가 끝났습니다.";
@@ -267,7 +268,7 @@ function RulesSheet({ onClose }: { onClose: () => void }) {
         <li><strong>15칸을 먼저 채우면 종료.</strong><span>어느 한쪽이 15칸을 채우는 즉시 현재 라인 점수로 승패를 판정합니다.</span></li>
         <li><strong>같은 눈은 알까기.</strong><span>상대 같은 라인의 동일한 일반 주사위를 전부 지우고 보너스 실드를 받습니다.</span></li>
         <li><strong>타짜는 경기당 한 번.</strong><span>현재 눈과 새 눈 중 하나를 고를 수 있습니다.</span></li>
-        <li><strong>아이템으로 판을 바꾸세요.</strong><span>같은 라인의 양쪽 주사위를 교환하거나, 놓인 주사위 하나의 눈을 바꿀 수 있습니다. 한 턴에 아이템은 1개만 사용하며 이후에도 착수할 수 있습니다.</span></li>
+        <li><strong>아이템으로 판을 바꾸세요.</strong><span>라인 교환, 일반 주사위 눈 변환, 현재 주사위 실드 강화를 경기당 한 번씩 쓸 수 있습니다. 실드는 아이템과 맵 효과를 받지 않습니다.</span></li>
         <li><strong>2개 라인을 이기면 승리.</strong><span>라인 승수가 같으면 전체 점수로 판정합니다.</span></li>
       </ol>
       <button className="button button--primary" onClick={onClose}>알겠어요</button>
@@ -331,22 +332,31 @@ function GameScreen({
   );
   const controlsLocked = ending || isRolling || connection !== "OPEN" || Boolean(pending);
   const isBonus = state.phase === "BONUS_PLACEMENT";
-  const inventory = state.inventory[selfId] ?? { SWAP: 0, REROLL: 0 };
-  const remainingItems = inventory.SWAP + inventory.REROLL;
+  const inventory = state.inventory[selfId] ?? { SWAP: 0, REROLL: 0, SHIELD: 0 };
+  const remainingItems = inventory.SWAP + inventory.REROLL + inventory.SHIELD;
   const swapItemStatus = state.itemUsedThisTurn
     ? "이번 턴 사용 완료"
     : inventory.SWAP <= 0
       ? "소진됨"
       : game.legalActions.canUseSwapItem
         ? "사용 가능"
-        : "같은 라인에 교환 대상이 없습니다.";
+        : "같은 라인에 교환 가능한 일반 주사위가 없습니다.";
   const rerollItemStatus = state.itemUsedThisTurn
     ? "이번 턴 사용 완료"
     : inventory.REROLL <= 0
       ? "소진됨"
       : game.legalActions.canUseRerollItem
         ? "사용 가능"
-        : "보드에 놓인 주사위가 없습니다.";
+        : "변환 가능한 일반 주사위가 없습니다.";
+  const shieldItemStatus = state.itemUsedThisTurn
+    ? "이번 턴 사용 완료"
+    : inventory.SHIELD <= 0
+      ? "소진됨"
+      : currentDie?.kind === "SHIELD"
+        ? "현재 주사위가 이미 실드입니다."
+        : game.legalActions.canUseShieldItem
+          ? "사용 가능"
+          : "일반 턴 주사위에만 사용할 수 있습니다.";
 
   const hasBonusTarget = (boardOwnerPlayerId: PlayerId, lane: LaneIndex) =>
     game.legalActions.bonusTargets.some(
@@ -422,11 +432,13 @@ function GameScreen({
           }
           if (!controlsLocked && itemMode?.type === "SWAP") {
             if (game.legalActions.swapItemLanes.includes(lane)) {
-              for (const die of ownBoard[lane]) ownSelectableDieIds.add(die.id);
+              for (const die of ownBoard[lane]) {
+                if (die.kind === "NORMAL") ownSelectableDieIds.add(die.id);
+              }
             }
             if (swapSelection?.lane === lane) {
               for (const die of opponentBoard[lane]) {
-                opponentSelectableDieIds.add(die.id);
+                if (die.kind === "NORMAL") opponentSelectableDieIds.add(die.id);
               }
             }
           }
@@ -586,7 +598,7 @@ function GameScreen({
             <span className="item-card__icon" aria-hidden="true">⇄</span>
             <span className="item-card__copy">
               <strong>라인 교환</strong>
-              <small>내 주사위와 같은 라인의 상대 주사위를 통째로 교환합니다.</small>
+              <small>내 일반 주사위와 같은 라인의 상대 일반 주사위를 통째로 교환합니다.</small>
               <em>{swapItemStatus}</em>
             </span>
             <span className="item-card__count">×{inventory.SWAP}</span>
@@ -602,10 +614,27 @@ function GameScreen({
             <span className="item-card__icon" aria-hidden="true">↻</span>
             <span className="item-card__copy">
               <strong>눈 변환</strong>
-              <small>내 주사위 또는 상대 주사위 하나를 다른 무작위 눈으로 바꿉니다.</small>
+              <small>내 일반 주사위 또는 상대 일반 주사위 하나를 다른 무작위 눈으로 바꿉니다.</small>
               <em>{rerollItemStatus}</em>
             </span>
             <span className="item-card__count">×{inventory.REROLL}</span>
+          </button>
+          <button
+            className="item-card item-card--shield"
+            disabled={!game.legalActions.canUseShieldItem || controlsLocked}
+            onClick={() => {
+              if (onCommand({ type: "USE_SHIELD_ITEM" }, "현재 주사위 실드 강화 중")) {
+                setOverlay(null);
+              }
+            }}
+          >
+            <span className="item-card__icon" aria-hidden="true"><ShieldIcon /></span>
+            <span className="item-card__copy">
+              <strong>실드 강화</strong>
+              <small>현재 눈을 유지한 채 주사위를 실드로 바꿉니다. 아이템과 맵 효과를 받지 않습니다.</small>
+              <em>{shieldItemStatus}</em>
+            </span>
+            <span className="item-card__count">×{inventory.SHIELD}</span>
           </button>
           {state.itemUsedThisTurn && (
             <p className="inventory-status">이번 턴에는 이미 아이템을 사용했습니다.</p>

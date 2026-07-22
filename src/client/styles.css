@@ -322,8 +322,11 @@ button.target-row:not(:disabled)::after { content: ""; position: absolute; inset
 .tazza-options > button > span { font-size: .68rem; font-weight: 800; }
 .item-card { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 13px; width: 100%; min-height: 84px; border: 1.5px solid var(--ink); border-radius: 5px; padding: 12px; background: rgba(85,220,226,.2); color: var(--ink); text-align: left; cursor: pointer; }
 .item-card--reroll { background: rgba(158,128,255,.18); }
+.item-card--shield { background: rgba(217,255,67,.22); }
 .item-card__icon { display: grid; place-items: center; width: 46px; height: 46px; border: 1.5px solid var(--ink); border-radius: 50%; background: var(--cyan); font: 900 1.45rem ui-monospace, monospace; }
 .item-card--reroll .item-card__icon { background: var(--violet); color: white; }
+.item-card--shield .item-card__icon { background: var(--acid); color: var(--ink); }
+.item-card--shield .item-card__icon .shield-icon { width: 24px; }
 .item-card__copy { display: grid; gap: 5px; }
 .item-card__copy strong { font-size: .88rem; }
 .item-card__copy small { color: rgba(23,26,29,.62); font-size: .69rem; line-height: 1.4; }

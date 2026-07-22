@@ -31,6 +31,10 @@ import type {
   Transition,
 } from "./types";
 
+export function isDieEffectImmune(die: Die): boolean {
+  return die.kind === "SHIELD";
+}
+
 function createDie(
   playerId: PlayerId,
   face: DieFace,
@@ -206,7 +210,7 @@ export function createGame(
   );
   const state: GameState = {
     schemaVersion: 2,
-    rulesVersion: "3",
+    rulesVersion: "4",
     gameId: context.ids.next("game"),
     version: 0,
     players,
@@ -227,10 +231,12 @@ export function createGame(
       [players[0]]: {
         SWAP: STARTING_ITEM_COUNT,
         REROLL: STARTING_ITEM_COUNT,
+        SHIELD: STARTING_ITEM_COUNT,
       },
       [players[1]]: {
         SWAP: STARTING_ITEM_COUNT,
         REROLL: STARTING_ITEM_COUNT,
+        SHIELD: STARTING_ITEM_COUNT,
       },
     },
     itemUsedThisTurn: false,
@@ -318,7 +324,7 @@ export function applyCommand(
       const ownLane = ownBoard[command.lane];
       const opponentLane = opponentBoard[command.lane];
 
-      if (die.kind !== "NORMAL") {
+      if (isDieEffectImmune(die)) {
         throw new RuleError(
           "ALKKAGI_NOT_AVAILABLE",
           "Only a normal turn die can perform alkkagi.",
@@ -334,7 +340,7 @@ export function applyCommand(
       }
 
       const removed = opponentLane.filter(
-        (target) => target.kind === "NORMAL" && target.face === die.face,
+        (target) => !isDieEffectImmune(target) && target.face === die.face,
       );
       if (removed.length === 0) {
         throw new RuleError(
@@ -436,6 +442,13 @@ export function applyCommand(
       const ownDie = ownLane[ownIndex];
       const opponentDie = opponentLane[opponentIndex];
       invariant(ownDie && opponentDie, "Swap targets disappeared unexpectedly.");
+      if (isDieEffectImmune(ownDie) || isDieEffectImmune(opponentDie)) {
+        throw new RuleError(
+          "INVALID_ITEM_TARGET",
+          "Shield dice cannot be targeted by swap items.",
+          { itemType: "SWAP", lane: command.lane, reason: "DIE_IS_PROTECTED" },
+        );
+      }
       ownLane[ownIndex] = opponentDie;
       opponentLane[opponentIndex] = ownDie;
       events.push({
@@ -469,6 +482,13 @@ export function applyCommand(
           { itemType: "REROLL", lane: command.lane },
         );
       }
+      if (isDieEffectImmune(target)) {
+        throw new RuleError(
+          "INVALID_ITEM_TARGET",
+          "Shield dice cannot be targeted by reroll items.",
+          { itemType: "REROLL", lane: command.lane, reason: "DIE_IS_PROTECTED" },
+        );
+      }
 
       const nextFace = context.rng.rollDifferentFace(target.face);
       if (nextFace === target.face) {
@@ -486,6 +506,29 @@ export function applyCommand(
         lane: command.lane,
         previousDie: target,
         die: rerolledDie,
+      });
+      break;
+    }
+
+    case "USE_SHIELD_ITEM": {
+      assertPhase(state, ["TURN_ACTION"]);
+      const previousDie = activeTurnDie(state);
+      consumeItem(state, actorPlayerId, "SHIELD");
+      if (isDieEffectImmune(previousDie)) {
+        throw new RuleError(
+          "INVALID_ITEM_TARGET",
+          "The current die is already protected by a shield.",
+          { itemType: "SHIELD", reason: "DIE_IS_PROTECTED" },
+        );
+      }
+
+      const shieldedDie: Die = { ...previousDie, kind: "SHIELD" };
+      state.pending = { source: "TURN", original: shieldedDie };
+      events.push({
+        type: "DIE_SHIELDED",
+        playerId: actorPlayerId,
+        previousDie,
+        die: shieldedDie,
       });
       break;
     }
@@ -579,6 +622,7 @@ export function getLegalActions(
     canUseTazza: false,
     canUseSwapItem: false,
     canUseRerollItem: false,
+    canUseShieldItem: false,
     canHold: false,
     canSurrender:
       state.phase !== "FINISHED" && state.players.includes(viewerPlayerId),
@@ -612,7 +656,8 @@ export function getLegalActions(
       if (inventory.SWAP > 0) {
         legal.swapItemLanes = laneIndexes().filter(
           (lane) =>
-            viewerBoard[lane].length > 0 && opponentBoard[lane].length > 0,
+            viewerBoard[lane].some((die) => !isDieEffectImmune(die)) &&
+            opponentBoard[lane].some((die) => !isDieEffectImmune(die)),
         );
         legal.canUseSwapItem = legal.swapItemLanes.length > 0;
       }
@@ -621,6 +666,7 @@ export function getLegalActions(
           const board = boardOf(state, boardOwnerPlayerId);
           for (const lane of laneIndexes()) {
             for (const die of board[lane]) {
+              if (isDieEffectImmune(die)) continue;
               legal.rerollItemTargets.push({
                 boardOwnerPlayerId,
                 lane,
@@ -631,16 +677,18 @@ export function getLegalActions(
         }
         legal.canUseRerollItem = legal.rerollItemTargets.length > 0;
       }
+      legal.canUseShieldItem =
+        inventory.SHIELD > 0 && !isDieEffectImmune(state.pending.original);
     }
 
-    if (state.pending.original.kind === "NORMAL") {
+    if (!isDieEffectImmune(state.pending.original)) {
       const pendingFace = state.pending.original.face;
       legal.alkkagiLanes = laneIndexes().filter(
         (lane) =>
           viewerBoard[lane].length < LANE_CAPACITY &&
           opponentBoard[lane].some(
             (die) =>
-              die.kind === "NORMAL" && die.face === pendingFace,
+              !isDieEffectImmune(die) && die.face === pendingFace,
           ),
       );
     }
@@ -701,7 +749,7 @@ export function assertGameInvariants(state: GameState): void {
 
     const inventory = state.inventory[playerId];
     invariant(inventory, `Missing inventory for ${playerId}.`);
-    for (const itemType of ["SWAP", "REROLL"] as const) {
+    for (const itemType of ["SWAP", "REROLL", "SHIELD"] as const) {
       const count = inventory[itemType];
       if (!Number.isInteger(count) || count < 0) {
         fail(`Invalid ${itemType} item count for ${playerId}.`);

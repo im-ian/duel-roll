@@ -2,7 +2,7 @@ export type PlayerId = string;
 export type LaneIndex = 0 | 1 | 2;
 export type DieFace = 1 | 2 | 3 | 4 | 5 | 6;
 export type DieKind = "NORMAL" | "SHIELD";
-export type ItemType = "SWAP" | "REROLL";
+export type ItemType = "SWAP" | "REROLL" | "SHIELD";
 
 export type ItemInventory = Record<ItemType, number>;
 
@@ -48,7 +48,7 @@ export type GameResult = {
 
 export type GameState = {
   schemaVersion: 2;
-  rulesVersion: "3";
+  rulesVersion: "4";
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
@@ -81,6 +81,7 @@ export type GameCommand =
       lane: LaneIndex;
       dieId: string;
     }
+  | { type: "USE_SHIELD_ITEM" }
   | {
       type: "CHOOSE_TAZZA_DIE";
       choice: "ORIGINAL" | "CANDIDATE";
@@ -139,6 +140,12 @@ export type GameEvent =
       die: Die;
     }
   | {
+      type: "DIE_SHIELDED";
+      playerId: PlayerId;
+      previousDie: Die;
+      die: Die;
+    }
+  | {
       type: "TAZZA_SELECTED";
       playerId: PlayerId;
       die: Die;
@@ -151,6 +158,7 @@ export type LegalActions = {
   canUseTazza: boolean;
   canUseSwapItem: boolean;
   canUseRerollItem: boolean;
+  canUseShieldItem: boolean;
   canHold: boolean;
   canSurrender: boolean;
   canChooseTazza: boolean;

@@ -4,6 +4,7 @@ import {
   assertGameInvariants,
   createGame,
   getLegalActions,
+  isDieEffectImmune,
 } from "../../src/game/engine";
 import { RuleError } from "../../src/game/errors";
 import { isEligible } from "../../src/game/scoring";
@@ -22,6 +23,11 @@ function oneLane(prefix: string, count = 5, createdBy = "A") {
 }
 
 describe("game engine", () => {
+  it("uses the shield kind as the shared effect-immunity rule", () => {
+    expect(isDieEffectImmune(die("normal", 1))).toBe(false);
+    expect(isDieEffectImmune(die("shield", 1, "SHIELD"))).toBe(true);
+  });
+
   it("starts with a server-selected first player and an opening shield", () => {
     const transition = createGame(
       ["A", "B"],
@@ -35,8 +41,8 @@ describe("game engine", () => {
       original: { face: 4, kind: "SHIELD", createdBy: "B" },
     });
     expect(transition.state.inventory).toEqual({
-      A: { SWAP: 1, REROLL: 1 },
-      B: { SWAP: 1, REROLL: 1 },
+      A: { SWAP: 1, REROLL: 1, SHIELD: 1 },
+      B: { SWAP: 1, REROLL: 1, SHIELD: 1 },
     });
     expect(transition.state.itemUsedThisTurn).toBe(false);
     expect(transition.events.map((event) => event.type)).toEqual([
@@ -325,7 +331,7 @@ describe("game engine", () => {
     const state = activeState({
       boards: {
         A: board([die("own", 2, "NORMAL", "A")], [], []),
-        B: board([die("opponent", 6, "SHIELD", "B")], [], []),
+        B: board([die("opponent", 6, "NORMAL", "B")], [], []),
       },
     });
 
@@ -342,12 +348,12 @@ describe("game engine", () => {
     );
 
     expect(swapped.state.boards.A?.[0]).toEqual([
-      die("opponent", 6, "SHIELD", "B"),
+      die("opponent", 6, "NORMAL", "B"),
     ]);
     expect(swapped.state.boards.B?.[0]).toEqual([
       die("own", 2, "NORMAL", "A"),
     ]);
-    expect(swapped.state.inventory.A).toEqual({ SWAP: 0, REROLL: 1 });
+    expect(swapped.state.inventory.A).toEqual({ SWAP: 0, REROLL: 1, SHIELD: 1 });
     expect(swapped.state.itemUsedThisTurn).toBe(true);
     expect(swapped.state.currentPlayerId).toBe("A");
     expect(swapped.state.pending).toEqual(state.pending);
@@ -356,11 +362,11 @@ describe("game engine", () => {
     ]);
   });
 
-  it("rerolls an opponent shield while preserving its identity and kind", () => {
+  it("rerolls an opponent normal die while preserving its identity", () => {
     const state = activeState({
       boards: {
         A: board([], [], []),
-        B: board([], [], [die("target", 4, "SHIELD", "B")]),
+        B: board([], [], [die("target", 4, "NORMAL", "B")]),
       },
     });
 
@@ -377,9 +383,9 @@ describe("game engine", () => {
     );
 
     expect(rerolled.state.boards.B?.[2]).toEqual([
-      die("target", 6, "SHIELD", "B"),
+      die("target", 6, "NORMAL", "B"),
     ]);
-    expect(rerolled.state.inventory.A).toEqual({ SWAP: 1, REROLL: 0 });
+    expect(rerolled.state.inventory.A).toEqual({ SWAP: 1, REROLL: 0, SHIELD: 1 });
     expect(rerolled.state.itemUsedThisTurn).toBe(true);
     expect(rerolled.state.pending).toEqual(state.pending);
     expect(rerolled.events).toMatchObject([
@@ -388,9 +394,151 @@ describe("game engine", () => {
         playerId: "A",
         boardOwnerPlayerId: "B",
         previousDie: { face: 4 },
-        die: { id: "target", face: 6, kind: "SHIELD" },
+        die: { id: "target", face: 6, kind: "NORMAL" },
       },
     ]);
+  });
+
+  it("turns the current normal die into a protected shield without ending the turn", () => {
+    const state = activeState({
+      pendingFace: 4,
+      boards: {
+        A: board([], [], []),
+        B: board([die("attack-target", 4, "NORMAL", "B")], [], []),
+      },
+    });
+
+    expect(getLegalActions(state, "A")).toMatchObject({
+      canUseShieldItem: true,
+      alkkagiLanes: [0],
+    });
+
+    const shielded = applyCommand(
+      state,
+      "A",
+      { type: "USE_SHIELD_ITEM" },
+      context(),
+    );
+
+    expect(shielded.state.pending).toMatchObject({
+      source: "TURN",
+      original: {
+        id: "pending",
+        face: 4,
+        kind: "SHIELD",
+        createdBy: "A",
+      },
+    });
+    expect(shielded.state.inventory.A).toEqual({
+      SWAP: 1,
+      REROLL: 1,
+      SHIELD: 0,
+    });
+    expect(shielded.state.itemUsedThisTurn).toBe(true);
+    expect(shielded.state.currentPlayerId).toBe("A");
+    expect(shielded.events).toMatchObject([
+      {
+        type: "DIE_SHIELDED",
+        playerId: "A",
+        previousDie: { id: "pending", face: 4, kind: "NORMAL" },
+        die: { id: "pending", face: 4, kind: "SHIELD" },
+      },
+    ]);
+    expect(getLegalActions(shielded.state, "A")).toMatchObject({
+      canUseSwapItem: false,
+      canUseRerollItem: false,
+      canUseShieldItem: false,
+      alkkagiLanes: [],
+    });
+
+    const placed = applyCommand(
+      shielded.state,
+      "A",
+      { type: "PLACE_OWN", lane: 1 },
+      context({ rolls: [2] }),
+    );
+    expect(placed.state.boards.A?.[1]).toEqual([
+      die("pending", 4, "SHIELD", "A"),
+    ]);
+    expect(placed.state.currentPlayerId).toBe("B");
+  });
+
+  it("excludes every shield die from swap and reroll item targets", () => {
+    const state = activeState({
+      boards: {
+        A: board(
+          [
+            die("own-shield", 2, "SHIELD", "A"),
+            die("own-normal", 3, "NORMAL", "A"),
+          ],
+          [],
+          [],
+        ),
+        B: board(
+          [
+            die("opponent-shield", 5, "SHIELD", "B"),
+            die("opponent-normal", 6, "NORMAL", "B"),
+          ],
+          [],
+          [],
+        ),
+      },
+    });
+
+    const legal = getLegalActions(state, "A");
+    expect(legal.swapItemLanes).toEqual([0]);
+    expect(legal.rerollItemTargets.map((target) => target.dieId).sort()).toEqual([
+      "opponent-normal",
+      "own-normal",
+    ]);
+
+    expect(() =>
+      applyCommand(
+        state,
+        "A",
+        {
+          type: "USE_SWAP_ITEM",
+          lane: 0,
+          ownDieId: "own-normal",
+          opponentDieId: "opponent-shield",
+        },
+        context(),
+      ),
+    ).toThrowError(expect.objectContaining({
+      code: "INVALID_ITEM_TARGET",
+      details: expect.objectContaining({ reason: "DIE_IS_PROTECTED" }),
+    }));
+    expect(() =>
+      applyCommand(
+        state,
+        "A",
+        {
+          type: "USE_REROLL_ITEM",
+          boardOwnerPlayerId: "A",
+          lane: 0,
+          dieId: "own-shield",
+        },
+        context({ differentRolls: [4] }),
+      ),
+    ).toThrowError(expect.objectContaining({
+      code: "INVALID_ITEM_TARGET",
+      details: expect.objectContaining({ reason: "DIE_IS_PROTECTED" }),
+    }));
+    expect(state.inventory.A).toEqual({ SWAP: 1, REROLL: 1, SHIELD: 1 });
+    expect(state.itemUsedThisTurn).toBe(false);
+  });
+
+  it("does not offer the shield item for an already protected turn die", () => {
+    const state = activeState({ pendingKind: "SHIELD" });
+
+    expect(getLegalActions(state, "A").canUseShieldItem).toBe(false);
+    expect(() =>
+      applyCommand(state, "A", { type: "USE_SHIELD_ITEM" }, context()),
+    ).toThrowError(expect.objectContaining({
+      code: "INVALID_ITEM_TARGET",
+      details: expect.objectContaining({ reason: "DIE_IS_PROTECTED" }),
+    }));
+    expect(state.inventory.A).toMatchObject({ SHIELD: 1 });
   });
 
   it("allows placement after an item and resets the item limit on the next turn", () => {
@@ -415,6 +563,7 @@ describe("game engine", () => {
     expect(getLegalActions(used.state, "A")).toMatchObject({
       canUseSwapItem: false,
       canUseRerollItem: false,
+      canUseShieldItem: false,
       swapItemLanes: [],
       rerollItemTargets: [],
     });
@@ -445,6 +594,7 @@ describe("game engine", () => {
     expect(getLegalActions(placed.state, "B")).toMatchObject({
       canUseSwapItem: true,
       canUseRerollItem: true,
+      canUseShieldItem: true,
     });
   });
 
@@ -469,7 +619,7 @@ describe("game engine", () => {
         context(),
       ),
     ).toThrowError(expect.objectContaining({ code: "INVALID_ITEM_TARGET" }));
-    expect(state.inventory.A).toEqual({ SWAP: 1, REROLL: 1 });
+    expect(state.inventory.A).toEqual({ SWAP: 1, REROLL: 1, SHIELD: 1 });
     expect(state.itemUsedThisTurn).toBe(false);
   });
 
@@ -492,6 +642,7 @@ describe("game engine", () => {
       canUseTazza: true,
       canUseSwapItem: true,
       canUseRerollItem: true,
+      canUseShieldItem: true,
       swapItemLanes: [0],
       canHold: true,
     });

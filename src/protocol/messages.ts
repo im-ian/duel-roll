@@ -83,6 +83,7 @@ export const GameCommandSchema = z.discriminatedUnion("type", [
     lane: LaneSchema,
     dieId: DieIdSchema,
   }),
+  z.object({ type: z.literal("USE_SHIELD_ITEM") }),
   z.object({
     type: z.literal("CHOOSE_TAZZA_DIE"),
     choice: z.enum(["ORIGINAL", "CANDIDATE"]),
