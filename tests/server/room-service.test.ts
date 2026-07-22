@@ -20,6 +20,11 @@ class RoomTestRng implements DiceRng {
   rollDifferentFace(excluded: DieFace): DieFace {
     return (excluded === 6 ? 1 : excluded + 1) as DieFace;
   }
+
+  pickIndex(upperBound: number): number {
+    if (upperBound <= 0) throw new Error("No random index is available.");
+    return 0;
+  }
 }
 
 function createStartedRoom() {

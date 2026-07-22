@@ -1,6 +1,7 @@
 import { RuleError } from "./errors";
 import {
   BOARD_CAPACITY,
+  ITEM_TYPES,
   LANE_CAPACITY,
   LANE_COUNT,
   STARTING_ITEM_COUNT,
@@ -16,9 +17,12 @@ import {
   scoreBoard,
 } from "./scoring";
 import type {
+  Board,
   Die,
   DieFace,
   DieKind,
+  DieParity,
+  DroppedDiePlacement,
   EngineContext,
   GameCommand,
   GameEvent,
@@ -33,6 +37,64 @@ import type {
 
 export function isDieEffectImmune(die: Die): boolean {
   return die.kind === "SHIELD";
+}
+
+const PARITY_FACES: Record<DieParity, readonly DieFace[]> = {
+  ODD: [1, 3, 5],
+  EVEN: [2, 4, 6],
+};
+
+function pickRandom<T>(
+  values: readonly T[],
+  context: EngineContext,
+  emptyMessage: string,
+): T {
+  if (values.length === 0) {
+    throw new RuleError("INVARIANT_VIOLATION", emptyMessage);
+  }
+  const index = context.rng.pickIndex(values.length);
+  const value = values[index];
+  if (!Number.isInteger(index) || index < 0 || value === undefined) {
+    throw new RuleError(
+      "INVARIANT_VIOLATION",
+      `RNG returned invalid index ${index} for ${values.length} candidates.`,
+    );
+  }
+  return value;
+}
+
+function availableSlotLanes(board: Board): LaneIndex[] {
+  return laneIndexes().flatMap((lane) =>
+    Array<LaneIndex>(LANE_CAPACITY - board[lane].length).fill(lane),
+  );
+}
+
+function createStartingInventory(): ItemInventory {
+  return Object.fromEntries(
+    ITEM_TYPES.map((itemType) => [itemType, STARTING_ITEM_COUNT]),
+  ) as ItemInventory;
+}
+
+function dropRandomDie(
+  state: GameState,
+  boardOwnerPlayerId: PlayerId,
+  createdByPlayerId: PlayerId,
+  context: EngineContext,
+): DroppedDiePlacement {
+  const board = boardOf(state, boardOwnerPlayerId);
+  const lane = pickRandom(
+    availableSlotLanes(board),
+    context,
+    `No empty slot is available for ${boardOwnerPlayerId}.`,
+  );
+  const die = createDie(
+    createdByPlayerId,
+    context.rng.rollD6(),
+    "NORMAL",
+    context,
+  );
+  board[lane].push(die);
+  return { boardOwnerPlayerId, lane, die };
 }
 
 function createDie(
@@ -209,8 +271,7 @@ export function createGame(
     context,
   );
   const state: GameState = {
-    schemaVersion: 2,
-    rulesVersion: "4",
+    schemaVersion: 3,
     gameId: context.ids.next("game"),
     version: 0,
     players,
@@ -228,16 +289,8 @@ export function createGame(
       [players[1]]: false,
     },
     inventory: {
-      [players[0]]: {
-        SWAP: STARTING_ITEM_COUNT,
-        REROLL: STARTING_ITEM_COUNT,
-        SHIELD: STARTING_ITEM_COUNT,
-      },
-      [players[1]]: {
-        SWAP: STARTING_ITEM_COUNT,
-        REROLL: STARTING_ITEM_COUNT,
-        SHIELD: STARTING_ITEM_COUNT,
-      },
+      [players[0]]: createStartingInventory(),
+      [players[1]]: createStartingInventory(),
     },
     itemUsedThisTurn: false,
     held: {
@@ -533,6 +586,96 @@ export function applyCommand(
       break;
     }
 
+    case "USE_DROP_ITEM": {
+      assertPhase(state, ["TURN_ACTION"]);
+      consumeItem(state, actorPlayerId, "DROP");
+      const opponentPlayerId = opponentOf(state.players, actorPlayerId);
+      const placements: [DroppedDiePlacement, DroppedDiePlacement] = [
+        dropRandomDie(state, actorPlayerId, actorPlayerId, context),
+        dropRandomDie(state, opponentPlayerId, actorPlayerId, context),
+      ];
+
+      events.push({
+        type: "DICE_DROPPED",
+        playerId: actorPlayerId,
+        placements,
+      });
+      if (hasCompletedBoard(state)) finishNormally(state, events);
+      break;
+    }
+
+    case "USE_DESTROY_ITEM": {
+      assertPhase(state, ["TURN_ACTION"]);
+      assertLane(command.lane);
+      if (!state.players.includes(command.boardOwnerPlayerId)) {
+        throw new RuleError(
+          "INVALID_BOARD_OWNER",
+          "Destroy target must belong to a player in this game.",
+        );
+      }
+      consumeItem(state, actorPlayerId, "DESTROY");
+
+      const lane = boardOf(state, command.boardOwnerPlayerId)[command.lane];
+      const targetIndex = lane.findIndex((die) => die.id === command.dieId);
+      const target = lane[targetIndex];
+      if (targetIndex < 0 || !target) {
+        throw new RuleError(
+          "INVALID_ITEM_TARGET",
+          "Destroy target must be a placed die in the selected lane.",
+          { itemType: "DESTROY", lane: command.lane },
+        );
+      }
+      if (isDieEffectImmune(target)) {
+        throw new RuleError(
+          "INVALID_ITEM_TARGET",
+          "Shield dice cannot be targeted by destroy items.",
+          { itemType: "DESTROY", lane: command.lane, reason: "DIE_IS_PROTECTED" },
+        );
+      }
+
+      lane.splice(targetIndex, 1);
+      events.push({
+        type: "DIE_DESTROYED",
+        playerId: actorPlayerId,
+        boardOwnerPlayerId: command.boardOwnerPlayerId,
+        lane: command.lane,
+        die: target,
+      });
+      break;
+    }
+
+    case "USE_PARITY_ITEM": {
+      assertPhase(state, ["TURN_ACTION"]);
+      const previousDie = activeTurnDie(state);
+      consumeItem(state, actorPlayerId, command.parity);
+      if (isDieEffectImmune(previousDie)) {
+        throw new RuleError(
+          "INVALID_ITEM_TARGET",
+          "Shield dice cannot be targeted by parity items.",
+          { itemType: command.parity, reason: "DIE_IS_PROTECTED" },
+        );
+      }
+
+      const candidates = PARITY_FACES[command.parity].filter(
+        (face) => face !== previousDie.face,
+      );
+      const face = pickRandom(
+        candidates,
+        context,
+        `No ${command.parity.toLowerCase()} face is available.`,
+      );
+      const changedDie: Die = { ...previousDie, face };
+      state.pending = { source: "TURN", original: changedDie };
+      events.push({
+        type: "TURN_DIE_PARITY_CHANGED",
+        playerId: actorPlayerId,
+        parity: command.parity,
+        previousDie,
+        die: changedDie,
+      });
+      break;
+    }
+
     case "CHOOSE_TAZZA_DIE": {
       assertPhase(state, ["TAZZA_CHOICE"]);
       if (state.pending?.source !== "TURN" || !state.pending.candidate) {
@@ -623,6 +766,10 @@ export function getLegalActions(
     canUseSwapItem: false,
     canUseRerollItem: false,
     canUseShieldItem: false,
+    canUseDropItem: false,
+    canUseDestroyItem: false,
+    canUseOddItem: false,
+    canUseEvenItem: false,
     canHold: false,
     canSurrender:
       state.phase !== "FINISHED" && state.players.includes(viewerPlayerId),
@@ -631,6 +778,7 @@ export function getLegalActions(
     alkkagiLanes: [],
     swapItemLanes: [],
     rerollItemTargets: [],
+    destroyItemTargets: [],
     bonusTargets: [],
   };
 
@@ -661,13 +809,14 @@ export function getLegalActions(
         );
         legal.canUseSwapItem = legal.swapItemLanes.length > 0;
       }
-      if (inventory.REROLL > 0) {
+      const normalTargets: LegalActions["rerollItemTargets"] = [];
+      if (inventory.REROLL > 0 || inventory.DESTROY > 0) {
         for (const boardOwnerPlayerId of state.players) {
           const board = boardOf(state, boardOwnerPlayerId);
           for (const lane of laneIndexes()) {
             for (const die of board[lane]) {
               if (isDieEffectImmune(die)) continue;
-              legal.rerollItemTargets.push({
+              normalTargets.push({
                 boardOwnerPlayerId,
                 lane,
                 dieId: die.id,
@@ -675,10 +824,25 @@ export function getLegalActions(
             }
           }
         }
+      }
+      if (inventory.REROLL > 0) {
+        legal.rerollItemTargets = [...normalTargets];
         legal.canUseRerollItem = legal.rerollItemTargets.length > 0;
+      }
+      if (inventory.DESTROY > 0) {
+        legal.destroyItemTargets = [...normalTargets];
+        legal.canUseDestroyItem = legal.destroyItemTargets.length > 0;
       }
       legal.canUseShieldItem =
         inventory.SHIELD > 0 && !isDieEffectImmune(state.pending.original);
+      legal.canUseDropItem =
+        inventory.DROP > 0 &&
+        state.players.every(
+          (playerId) => availableSlotLanes(boardOf(state, playerId)).length > 0,
+        );
+      const canChangePending = !isDieEffectImmune(state.pending.original);
+      legal.canUseOddItem = inventory.ODD > 0 && canChangePending;
+      legal.canUseEvenItem = inventory.EVEN > 0 && canChangePending;
     }
 
     if (!isDieEffectImmune(state.pending.original)) {
@@ -749,7 +913,7 @@ export function assertGameInvariants(state: GameState): void {
 
     const inventory = state.inventory[playerId];
     invariant(inventory, `Missing inventory for ${playerId}.`);
-    for (const itemType of ["SWAP", "REROLL", "SHIELD"] as const) {
+    for (const itemType of ITEM_TYPES) {
       const count = inventory[itemType];
       if (!Number.isInteger(count) || count < 0) {
         fail(`Invalid ${itemType} item count for ${playerId}.`);

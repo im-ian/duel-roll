@@ -22,6 +22,29 @@ describe("GameCommandSchema", () => {
     expect(
       GameCommandSchema.safeParse({ type: "USE_SHIELD_ITEM" }).success,
     ).toBe(true);
+    expect(
+      GameCommandSchema.safeParse({ type: "USE_DROP_ITEM" }).success,
+    ).toBe(true);
+    expect(
+      GameCommandSchema.safeParse({
+        type: "USE_DESTROY_ITEM",
+        boardOwnerPlayerId: "player-a",
+        lane: 0,
+        dieId: "die-target",
+      }).success,
+    ).toBe(true);
+    expect(
+      GameCommandSchema.safeParse({
+        type: "USE_PARITY_ITEM",
+        parity: "ODD",
+      }).success,
+    ).toBe(true);
+    expect(
+      GameCommandSchema.safeParse({
+        type: "USE_PARITY_ITEM",
+        parity: "EVEN",
+      }).success,
+    ).toBe(true);
   });
 
   it("rejects malformed item targets", () => {
@@ -39,6 +62,20 @@ describe("GameCommandSchema", () => {
         boardOwnerPlayerId: "player-b",
         lane: 0,
         dieId: "",
+      }).success,
+    ).toBe(false);
+    expect(
+      GameCommandSchema.safeParse({
+        type: "USE_DESTROY_ITEM",
+        boardOwnerPlayerId: "player-b",
+        lane: 0,
+        dieId: "",
+      }).success,
+    ).toBe(false);
+    expect(
+      GameCommandSchema.safeParse({
+        type: "USE_PARITY_ITEM",
+        parity: "ANY",
       }).success,
     ).toBe(false);
   });

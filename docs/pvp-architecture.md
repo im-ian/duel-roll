@@ -1,7 +1,7 @@
 # 방 코드 PVP 아키텍처
 
 - 상태: 현재 구현 기준선
-- 문서 버전: 0.4
+- 문서 버전: 0.5
 - 최종 검토: 2026-07-22
 
 이 문서는 [게임 규칙 명세](./game-rules.md)를 서버 권위의 2인 실시간 웹 게임으로 구현하기 위한 논리 아키텍처와 데이터 계약을 정의한다. 특정 프레임워크를 고르기 전에도 규칙 엔진, 네트워크, 저장소, UI의 책임이 섞이지 않게 하는 것이 목적이다.
@@ -178,6 +178,9 @@ WAITING_FOR_OPPONENT
 | `USE_SWAP_ITEM` | `{ lane, ownDieId, opponentDieId }` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 두 대상이 같은 라인의 양쪽 보드에 있는 `NORMAL` |
 | `USE_REROLL_ITEM` | `{ boardOwnerPlayerId, lane, dieId }` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 대상이 지정 보드·라인에 있는 `NORMAL` |
 | `USE_SHIELD_ITEM` | `{}` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 현재 턴 주사위가 `NORMAL` |
+| `USE_DROP_ITEM` | `{}` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 양쪽 보드에 빈칸 |
+| `USE_DESTROY_ITEM` | `{ boardOwnerPlayerId, lane, dieId }` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 대상이 지정 보드·라인에 있는 `NORMAL` |
+| `USE_PARITY_ITEM` | `{ parity: "ODD" | "EVEN" }` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 해당 수량 보유, 현재 턴 주사위가 `NORMAL` |
 | `CHOOSE_TAZZA_DIE` | `{ choice: "ORIGINAL" | "CANDIDATE" }` | 내 턴, `TAZZA_CHOICE` |
 | `PLACE_BONUS_SHIELD` | `{ boardOwnerPlayerId, lane }` | 내 턴, `BONUS_PLACEMENT`, 대상 빈칸 |
 | `HOLD` | `{}` | 내 턴, `TURN_ACTION` 또는 `TAZZA_CHOICE` |
@@ -208,7 +211,14 @@ type PlayerId = string;
 type LaneIndex = 0 | 1 | 2;
 type DieFace = 1 | 2 | 3 | 4 | 5 | 6;
 type DieKind = "NORMAL" | "SHIELD";
-type ItemType = "SWAP" | "REROLL" | "SHIELD";
+type DieParity = "ODD" | "EVEN";
+type ItemType =
+  | "SWAP"
+  | "REROLL"
+  | "SHIELD"
+  | "DROP"
+  | "DESTROY"
+  | DieParity;
 type ItemInventory = Record<ItemType, number>;
 
 type Die = {
@@ -248,8 +258,7 @@ type GameResult = {
 };
 
 type GameState = {
-  schemaVersion: 2;
-  rulesVersion: "4";
+  schemaVersion: 3;
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
@@ -292,6 +301,9 @@ START_GAME
        | USE_SWAP_ITEM ----------------------> TURN_ACTION
        | USE_REROLL_ITEM --------------------> TURN_ACTION
        | USE_SHIELD_ITEM --------------------> TURN_ACTION
+       | USE_DESTROY_ITEM -------------------> TURN_ACTION
+       | USE_PARITY_ITEM --------------------> TURN_ACTION
+       | USE_DROP_ITEM ----------------------> TURN_ACTION 또는 FINISHED
        | HOLD -------------------------------+
        | SURRENDER -> FINISHED                |
                                                v
@@ -377,19 +389,21 @@ function applyCommand(
 
 ## 11. 난수
 
-서버 RNG 인터페이스를 세 동작으로 분리한다.
+서버 RNG 인터페이스를 네 동작으로 분리한다.
 
 ```ts
 interface DiceRng {
   chooseFirstPlayer(players: [PlayerId, PlayerId]): PlayerId;
   rollD6(): DieFace;
   rollDifferentFace(excluded: DieFace): DieFace;
+  pickIndex(upperBound: number): number;
 }
 ```
 
 - 운영 환경은 암호학적으로 안전한 난수 생성기를 사용한다.
 - 범위 변환에는 modulo bias가 없는 표준 `randomInt` 계열 API를 사용한다.
 - `rollDifferentFace`는 제외한 눈 이외의 5개를 정확히 같은 확률로 반환한다.
+- `pickIndex`는 `0..upperBound-1`을 편향 없이 반환하며 무작위 빈 슬롯과 홀짝 후보 선택에 사용한다.
 - 테스트에서는 미리 정한 값을 순서대로 반환하는 RNG를 주입한다.
 - 클라이언트가 난수, seed, 주사위 결과를 제안하지 않는다.
 - 이벤트 로그에는 확정된 결과와 원인이 된 명령을 남긴다.
@@ -414,10 +428,18 @@ interface DiceRng {
   "canUseSwapItem": true,
   "canUseRerollItem": true,
   "canUseShieldItem": true,
+  "canUseDropItem": true,
+  "canUseDestroyItem": true,
+  "canUseOddItem": true,
+  "canUseEvenItem": true,
   "ownPlacementLanes": [0, 2],
   "alkkagiLanes": [1],
   "swapItemLanes": [0],
   "rerollItemTargets": [
+    { "boardOwnerPlayerId": "player-a", "lane": 0, "dieId": "die-7" },
+    { "boardOwnerPlayerId": "player-b", "lane": 2, "dieId": "die-11" }
+  ],
+  "destroyItemTargets": [
     { "boardOwnerPlayerId": "player-a", "lane": 0, "dieId": "die-7" },
     { "boardOwnerPlayerId": "player-b", "lane": 2, "dieId": "die-11" }
   ],
@@ -528,7 +550,7 @@ interface DiceRng {
 ### 규칙 단위 테스트
 
 - [게임 규칙 명세의 구현 수용 테스트](./game-rules.md#13-구현-수용-테스트)를 테이블 기반으로 구현한다.
-- 스크립트 RNG로 선공, 일반 눈, 타짜 후보, 보너스 눈을 고정한다.
+- 스크립트 RNG로 선공, 일반 눈, 타짜 후보, 보너스 눈, 빈 슬롯 인덱스와 홀짝 후보 인덱스를 고정한다.
 - 점수, 합법 행동 selector, 다음 플레이어, 승패 판정을 각각 독립 테스트한다.
 
 ### 속성 테스트
@@ -539,11 +561,12 @@ interface DiceRng {
 - 눈은 항상 `1..6`이다.
 - 실드는 제거 이벤트의 대상이 되지 않는다.
 - 실드는 아이템 및 향후 맵 효과의 대상이 되지 않는다. 모든 효과는 공통 `isDieEffectImmune` 판정을 사용한다.
+- 무작위 투하는 양쪽 보드의 빈 슬롯을 각각 균등 추첨하고, 두 배치를 모두 적용한 뒤 15칸 종료 여부를 판정한다.
 - `FINISHED` 뒤 상태는 게임 명령으로 바뀌지 않는다.
 - 저장된 점수와 보드 재계산 점수가 다를 수 없다.
 - 활성 상태에는 15개를 채운 보드가 남을 수 없고, 15번째 배치 전이는 반드시 `FINISHED`로 끝난다.
 - 같은 상태·명령·스크립트 RNG는 같은 전이 결과를 만든다.
-- 아이템 명령 뒤 pending 턴 주사위와 현재 플레이어는 유지되고, 같은 턴의 두 번째 아이템은 거절된다.
+- 아이템 명령 뒤 pending 턴 주사위와 현재 플레이어는 유지되고, 같은 턴의 두 번째 아이템은 거절된다. 단, 무작위 투하로 15칸을 완성한 경우는 즉시 종료한다.
 
 ### 애플리케이션 통합 테스트
 
@@ -576,7 +599,7 @@ interface DiceRng {
 - 평균 경기 시간과 턴 수
 - 선공/후공 승률
 
-규칙 변경 시 `rulesVersion`을 경기 기록에 남겨 서로 다른 버전의 통계를 섞지 않는다.
+현재 메모리 MVP의 `GameState`에는 별도 규칙 버전을 저장하지 않는다. 영속 리플레이나 장기 통계를 도입할 때 당시 규칙 식별자를 로그 메타데이터로 추가한다.
 
 ## 19. 권장 구현 순서
 

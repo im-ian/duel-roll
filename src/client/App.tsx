@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
+import { ITEM_TYPES } from "../game/constants";
 import type {
   Board,
   Die,
   GameCommand,
   GameEvent,
+  ItemInventory,
   LaneIndex,
   PlayerId,
 } from "../game";
@@ -27,9 +29,20 @@ type ItemMode =
       ownSelection?: { lane: LaneIndex; dieId: string };
     }
   | { type: "REROLL" }
+  | { type: "DESTROY" }
   | null;
 
 const GAME_END_TRANSITION_MS = 2_000;
+const DROP_ITEM_LABEL = "무작위 투하";
+const EMPTY_INVENTORY: ItemInventory = {
+  SWAP: 0,
+  REROLL: 0,
+  SHIELD: 0,
+  DROP: 0,
+  DESTROY: 0,
+  ODD: 0,
+  EVEN: 0,
+};
 
 function normalizeCode(value: string): string {
   return value.toUpperCase().replace(/[\s-]/g, "").slice(0, 6);
@@ -252,6 +265,9 @@ function eventText(event: GameEvent, selfPlayerId: PlayerId): string {
     case "DICE_SWAPPED": return `${who(event.playerId)} ${event.lane + 1}번 라인의 주사위를 교환했습니다.`;
     case "DIE_REROLLED": return `${who(event.playerId)} ${event.boardOwnerPlayerId === selfPlayerId ? "내" : "상대"} 주사위를 ${event.previousDie.face}→${event.die.face}로 변환했습니다.`;
     case "DIE_SHIELDED": return `${who(event.playerId)} 현재 주사위를 실드로 강화했습니다.`;
+    case "DICE_DROPPED": return `${who(event.playerId)} 양쪽 보드에 무작위 주사위를 떨어뜨렸습니다.`;
+    case "DIE_DESTROYED": return `${who(event.playerId)} ${event.boardOwnerPlayerId === selfPlayerId ? "내" : "상대"} 주사위를 파괴했습니다.`;
+    case "TURN_DIE_PARITY_CHANGED": return `${who(event.playerId)} 현재 주사위를 ${event.parity === "ODD" ? "홀수" : "짝수"} ${event.previousDie.face}→${event.die.face}로 바꿨습니다.`;
     case "PLAYER_HELD": return `${who(event.playerId)} 홀드했습니다.`;
     case "PLAYER_SURRENDERED": return `${who(event.playerId)} 항복했습니다.`;
     case "GAME_FINISHED": return "경기가 끝났습니다.";
@@ -268,7 +284,7 @@ function RulesSheet({ onClose }: { onClose: () => void }) {
         <li><strong>15칸을 먼저 채우면 종료.</strong><span>어느 한쪽이 15칸을 채우는 즉시 현재 라인 점수로 승패를 판정합니다.</span></li>
         <li><strong>같은 눈은 알까기.</strong><span>상대 같은 라인의 동일한 일반 주사위를 전부 지우고 보너스 실드를 받습니다.</span></li>
         <li><strong>타짜는 경기당 한 번.</strong><span>현재 눈과 새 눈 중 하나를 고를 수 있습니다.</span></li>
-        <li><strong>아이템으로 판을 바꾸세요.</strong><span>주사위 교환, 일반 주사위 눈 변환, 현재 주사위 실드 강화를 경기당 한 번씩 쓸 수 있습니다. 실드는 아이템과 맵 효과를 받지 않습니다.</span></li>
+        <li><strong>아이템으로 판을 바꾸세요.</strong><span>교환·눈 변환·실드 강화·무작위 투하·파괴·홀수·짝수 아이템을 경기당 한 번씩 쓸 수 있습니다. 실드는 아이템과 맵 효과를 받지 않습니다.</span></li>
         <li><strong>2개 라인을 이기면 승리.</strong><span>라인 승수가 같으면 전체 점수로 판정합니다.</span></li>
       </ol>
       <button className="button button--primary" onClick={onClose}>알겠어요</button>
@@ -332,8 +348,11 @@ function GameScreen({
   );
   const controlsLocked = ending || isRolling || connection !== "OPEN" || Boolean(pending);
   const isBonus = state.phase === "BONUS_PLACEMENT";
-  const inventory = state.inventory[selfId] ?? { SWAP: 0, REROLL: 0, SHIELD: 0 };
-  const remainingItems = inventory.SWAP + inventory.REROLL + inventory.SHIELD;
+  const inventory = state.inventory[selfId] ?? EMPTY_INVENTORY;
+  const remainingItems = ITEM_TYPES.reduce(
+    (total, itemType) => total + inventory[itemType],
+    0,
+  );
   const swapItemStatus = state.itemUsedThisTurn
     ? "이번 턴 사용 완료"
     : inventory.SWAP <= 0
@@ -357,6 +376,38 @@ function GameScreen({
         : game.legalActions.canUseShieldItem
           ? "사용 가능"
           : "일반 턴 주사위에만 사용할 수 있습니다.";
+  const dropItemStatus = state.itemUsedThisTurn
+    ? "이번 턴 사용 완료"
+    : inventory.DROP <= 0
+      ? "소진됨"
+      : game.legalActions.canUseDropItem
+        ? "사용 가능"
+        : "양쪽 보드에 빈칸이 필요합니다.";
+  const destroyItemStatus = state.itemUsedThisTurn
+    ? "이번 턴 사용 완료"
+    : inventory.DESTROY <= 0
+      ? "소진됨"
+      : game.legalActions.canUseDestroyItem
+        ? "사용 가능"
+        : "파괴할 수 있는 일반 주사위가 없습니다.";
+  const oddItemStatus = state.itemUsedThisTurn
+    ? "이번 턴 사용 완료"
+    : inventory.ODD <= 0
+      ? "소진됨"
+      : currentDie?.kind === "SHIELD"
+        ? "실드 주사위에는 사용할 수 없습니다."
+        : game.legalActions.canUseOddItem
+          ? "사용 가능"
+          : "일반 턴 주사위에만 사용할 수 있습니다.";
+  const evenItemStatus = state.itemUsedThisTurn
+    ? "이번 턴 사용 완료"
+    : inventory.EVEN <= 0
+      ? "소진됨"
+      : currentDie?.kind === "SHIELD"
+        ? "실드 주사위에는 사용할 수 없습니다."
+        : game.legalActions.canUseEvenItem
+          ? "사용 가능"
+          : "일반 턴 주사위에만 사용할 수 있습니다.";
 
   const hasBonusTarget = (boardOwnerPlayerId: PlayerId, lane: LaneIndex) =>
     game.legalActions.bonusTargets.some(
@@ -366,6 +417,8 @@ function GameScreen({
   let instruction = "놓거나 공격할 라인을 선택하세요.";
   if (itemMode?.type === "REROLL") {
     instruction = "변환할 내 주사위 또는 상대 주사위를 선택하세요.";
+  } else if (itemMode?.type === "DESTROY") {
+    instruction = "파괴할 내 주사위 또는 상대 주사위를 선택하세요.";
   } else if (itemMode?.type === "SWAP") {
     instruction = itemMode.ownSelection
       ? "같은 라인의 상대 주사위를 선택하세요."
@@ -419,8 +472,14 @@ function GameScreen({
             ? itemMode.ownSelection
             : undefined;
 
-          if (!controlsLocked && itemMode?.type === "REROLL") {
-            for (const target of game.legalActions.rerollItemTargets) {
+          if (
+            !controlsLocked &&
+            (itemMode?.type === "REROLL" || itemMode?.type === "DESTROY")
+          ) {
+            const targets = itemMode.type === "REROLL"
+              ? game.legalActions.rerollItemTargets
+              : game.legalActions.destroyItemTargets;
+            for (const target of targets) {
               if (target.lane !== lane) continue;
               if (target.boardOwnerPlayerId === selfId) {
                 ownSelectableDieIds.add(target.dieId);
@@ -443,24 +502,19 @@ function GameScreen({
             }
           }
 
-          const selectOwnDie = itemMode?.type === "SWAP"
-            ? (die: Die) => setItemMode((current) => {
-                if (current?.type !== "SWAP") return current;
-                if (current.ownSelection?.dieId === die.id) {
-                  return { type: "SWAP" };
-                }
-                return { type: "SWAP", ownSelection: { lane, dieId: die.id } };
-              })
-            : itemMode?.type === "REROLL"
-              ? (die: Die) => {
-                  onCommand(
-                    { type: "USE_REROLL_ITEM", boardOwnerPlayerId: selfId, lane, dieId: die.id },
-                    `${lane + 1}번 라인 내 주사위 변환 중`,
-                  );
-                }
-              : undefined;
-          const selectOpponentDie = itemMode?.type === "SWAP" && swapSelection?.lane === lane
-            ? (die: Die) => {
+          let selectOwnDie: ((die: Die) => void) | undefined;
+          let selectOpponentDie: ((die: Die) => void) | undefined;
+
+          if (itemMode?.type === "SWAP") {
+            selectOwnDie = (die) => setItemMode((current) => {
+              if (current?.type !== "SWAP") return current;
+              if (current.ownSelection?.dieId === die.id) {
+                return { type: "SWAP" };
+              }
+              return { type: "SWAP", ownSelection: { lane, dieId: die.id } };
+            });
+            if (swapSelection?.lane === lane) {
+              selectOpponentDie = (die) => {
                 onCommand(
                   {
                     type: "USE_SWAP_ITEM",
@@ -470,15 +524,37 @@ function GameScreen({
                   },
                   `${lane + 1}번 라인 주사위 교환 중`,
                 );
-              }
-            : itemMode?.type === "REROLL"
-              ? (die: Die) => {
-                  onCommand(
-                    { type: "USE_REROLL_ITEM", boardOwnerPlayerId: opponentId, lane, dieId: die.id },
-                    `${lane + 1}번 라인 상대 주사위 변환 중`,
-                  );
-                }
-              : undefined;
+              };
+            }
+          }
+          if (itemMode?.type === "REROLL") {
+            selectOwnDie = (die) => {
+              onCommand(
+                { type: "USE_REROLL_ITEM", boardOwnerPlayerId: selfId, lane, dieId: die.id },
+                `${lane + 1}번 라인 내 주사위 변환 중`,
+              );
+            };
+            selectOpponentDie = (die) => {
+              onCommand(
+                { type: "USE_REROLL_ITEM", boardOwnerPlayerId: opponentId, lane, dieId: die.id },
+                `${lane + 1}번 라인 상대 주사위 변환 중`,
+              );
+            };
+          }
+          if (itemMode?.type === "DESTROY") {
+            selectOwnDie = (die) => {
+              onCommand(
+                { type: "USE_DESTROY_ITEM", boardOwnerPlayerId: selfId, lane, dieId: die.id },
+                `${lane + 1}번 라인 내 주사위 파괴 중`,
+              );
+            };
+            selectOpponentDie = (die) => {
+              onCommand(
+                { type: "USE_DESTROY_ITEM", boardOwnerPlayerId: opponentId, lane, dieId: die.id },
+                `${lane + 1}번 라인 상대 주사위 파괴 중`,
+              );
+            };
+          }
           return (
             <LaneCard
               key={lane}
@@ -635,6 +711,73 @@ function GameScreen({
               <em>{shieldItemStatus}</em>
             </span>
             <span className="item-card__count">×{inventory.SHIELD}</span>
+          </button>
+          <button
+            className="item-card item-card--drop"
+            disabled={!game.legalActions.canUseDropItem || controlsLocked}
+            onClick={() => {
+              if (onCommand({ type: "USE_DROP_ITEM" }, `${DROP_ITEM_LABEL} 사용 중`)) {
+                setOverlay(null);
+              }
+            }}
+          >
+            <span className="item-card__icon" aria-hidden="true">✦</span>
+            <span className="item-card__copy">
+              <strong>{DROP_ITEM_LABEL}</strong>
+              <small>양쪽 보드의 무작위 빈칸에 무작위 일반 주사위를 하나씩 떨어뜨립니다.</small>
+              <em>{dropItemStatus}</em>
+            </span>
+            <span className="item-card__count">×{inventory.DROP}</span>
+          </button>
+          <button
+            className="item-card item-card--destroy"
+            disabled={!game.legalActions.canUseDestroyItem || controlsLocked}
+            onClick={() => {
+              setItemMode({ type: "DESTROY" });
+              setOverlay(null);
+            }}
+          >
+            <span className="item-card__icon" aria-hidden="true">×</span>
+            <span className="item-card__copy">
+              <strong>주사위 파괴</strong>
+              <small>내 일반 주사위 또는 상대 일반 주사위 하나를 선택해 제거합니다.</small>
+              <em>{destroyItemStatus}</em>
+            </span>
+            <span className="item-card__count">×{inventory.DESTROY}</span>
+          </button>
+          <button
+            className="item-card item-card--odd"
+            disabled={!game.legalActions.canUseOddItem || controlsLocked}
+            onClick={() => {
+              if (onCommand({ type: "USE_PARITY_ITEM", parity: "ODD" }, "현재 주사위 홀수 변경 중")) {
+                setOverlay(null);
+              }
+            }}
+          >
+            <span className="item-card__icon item-card__icon--numbers" aria-hidden="true">135</span>
+            <span className="item-card__copy">
+              <strong>홀수 주사위</strong>
+              <small>현재 일반 주사위를 기존 눈과 다른 무작위 홀수 눈으로 바꿉니다.</small>
+              <em>{oddItemStatus}</em>
+            </span>
+            <span className="item-card__count">×{inventory.ODD}</span>
+          </button>
+          <button
+            className="item-card item-card--even"
+            disabled={!game.legalActions.canUseEvenItem || controlsLocked}
+            onClick={() => {
+              if (onCommand({ type: "USE_PARITY_ITEM", parity: "EVEN" }, "현재 주사위 짝수 변경 중")) {
+                setOverlay(null);
+              }
+            }}
+          >
+            <span className="item-card__icon item-card__icon--numbers" aria-hidden="true">246</span>
+            <span className="item-card__copy">
+              <strong>짝수 주사위</strong>
+              <small>현재 일반 주사위를 기존 눈과 다른 무작위 짝수 눈으로 바꿉니다.</small>
+              <em>{evenItemStatus}</em>
+            </span>
+            <span className="item-card__count">×{inventory.EVEN}</span>
           </button>
           {state.itemUsedThisTurn && (
             <p className="inventory-status">이번 턴에는 이미 아이템을 사용했습니다.</p>

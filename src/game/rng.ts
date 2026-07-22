@@ -23,6 +23,13 @@ export class CryptoDiceRng implements DiceRng {
     if (!face) throw new Error("No alternative die face is available.");
     return face;
   }
+
+  pickIndex(upperBound: number): number {
+    if (!Number.isInteger(upperBound) || upperBound <= 0) {
+      throw new Error("Random index upper bound must be a positive integer.");
+    }
+    return randomInt(0, upperBound);
+  }
 }
 
 export class RandomIdGenerator implements IdGenerator {

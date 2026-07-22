@@ -2,7 +2,14 @@ export type PlayerId = string;
 export type LaneIndex = 0 | 1 | 2;
 export type DieFace = 1 | 2 | 3 | 4 | 5 | 6;
 export type DieKind = "NORMAL" | "SHIELD";
-export type ItemType = "SWAP" | "REROLL" | "SHIELD";
+export type DieParity = "ODD" | "EVEN";
+export type ItemType =
+  | "SWAP"
+  | "REROLL"
+  | "SHIELD"
+  | "DROP"
+  | "DESTROY"
+  | DieParity;
 
 export type ItemInventory = Record<ItemType, number>;
 
@@ -13,6 +20,12 @@ export type Die = {
   createdBy: PlayerId;
 };
 export type Board = [Die[], Die[], Die[]];
+
+export type DroppedDiePlacement = {
+  boardOwnerPlayerId: PlayerId;
+  lane: LaneIndex;
+  die: Die;
+};
 
 export type TurnPending =
   | {
@@ -47,8 +60,7 @@ export type GameResult = {
 };
 
 export type GameState = {
-  schemaVersion: 2;
-  rulesVersion: "4";
+  schemaVersion: 3;
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
@@ -82,6 +94,14 @@ export type GameCommand =
       dieId: string;
     }
   | { type: "USE_SHIELD_ITEM" }
+  | { type: "USE_DROP_ITEM" }
+  | {
+      type: "USE_DESTROY_ITEM";
+      boardOwnerPlayerId: PlayerId;
+      lane: LaneIndex;
+      dieId: string;
+    }
+  | { type: "USE_PARITY_ITEM"; parity: DieParity }
   | {
       type: "CHOOSE_TAZZA_DIE";
       choice: "ORIGINAL" | "CANDIDATE";
@@ -146,6 +166,25 @@ export type GameEvent =
       die: Die;
     }
   | {
+      type: "DICE_DROPPED";
+      playerId: PlayerId;
+      placements: [DroppedDiePlacement, DroppedDiePlacement];
+    }
+  | {
+      type: "DIE_DESTROYED";
+      playerId: PlayerId;
+      boardOwnerPlayerId: PlayerId;
+      lane: LaneIndex;
+      die: Die;
+    }
+  | {
+      type: "TURN_DIE_PARITY_CHANGED";
+      playerId: PlayerId;
+      parity: DieParity;
+      previousDie: Die;
+      die: Die;
+    }
+  | {
       type: "TAZZA_SELECTED";
       playerId: PlayerId;
       die: Die;
@@ -159,6 +198,10 @@ export type LegalActions = {
   canUseSwapItem: boolean;
   canUseRerollItem: boolean;
   canUseShieldItem: boolean;
+  canUseDropItem: boolean;
+  canUseDestroyItem: boolean;
+  canUseOddItem: boolean;
+  canUseEvenItem: boolean;
   canHold: boolean;
   canSurrender: boolean;
   canChooseTazza: boolean;
@@ -166,6 +209,11 @@ export type LegalActions = {
   alkkagiLanes: LaneIndex[];
   swapItemLanes: LaneIndex[];
   rerollItemTargets: Array<{
+    boardOwnerPlayerId: PlayerId;
+    lane: LaneIndex;
+    dieId: string;
+  }>;
+  destroyItemTargets: Array<{
     boardOwnerPlayerId: PlayerId;
     lane: LaneIndex;
     dieId: string;
@@ -180,6 +228,7 @@ export interface DiceRng {
   chooseFirstPlayer(players: [PlayerId, PlayerId]): PlayerId;
   rollD6(): DieFace;
   rollDifferentFace(excluded: DieFace): DieFace;
+  pickIndex(upperBound: number): number;
 }
 
 export interface IdGenerator {

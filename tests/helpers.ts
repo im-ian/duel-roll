@@ -14,15 +14,18 @@ export class ScriptedRng implements DiceRng {
   private readonly firstPlayer: PlayerId;
   private readonly rolls: DieFace[];
   private readonly differentRolls: DieFace[];
+  private readonly indexes: number[];
 
   constructor(options?: {
     firstPlayer?: PlayerId;
     rolls?: DieFace[];
     differentRolls?: DieFace[];
+    indexes?: number[];
   }) {
     this.firstPlayer = options?.firstPlayer ?? "A";
     this.rolls = [...(options?.rolls ?? [1])];
     this.differentRolls = [...(options?.differentRolls ?? [2])];
+    this.indexes = [...(options?.indexes ?? [0])];
   }
 
   chooseFirstPlayer(players: [PlayerId, PlayerId]): PlayerId {
@@ -46,6 +49,15 @@ export class ScriptedRng implements DiceRng {
     }
     return face;
   }
+
+  pickIndex(upperBound: number): number {
+    const index = this.indexes.shift();
+    if (index === undefined) throw new Error("Scripted indexes exhausted.");
+    if (!Number.isInteger(index) || index < 0 || index >= upperBound) {
+      throw new Error(`Scripted index ${index} is outside 0..${upperBound - 1}.`);
+    }
+    return index;
+  }
 }
 export class SequentialIds implements IdGenerator {
   private sequence = 0;
@@ -60,6 +72,7 @@ export function context(options?: {
   firstPlayer?: PlayerId;
   rolls?: DieFace[];
   differentRolls?: DieFace[];
+  indexes?: number[];
 }): EngineContext {
   return {
     rng: new ScriptedRng(options),
@@ -92,8 +105,7 @@ export function activeState(options?: {
 }): GameState {
   const currentPlayerId = options?.currentPlayerId ?? "A";
   return {
-    schemaVersion: 2,
-    rulesVersion: "4",
+    schemaVersion: 3,
     gameId: "game_test",
     version: 0,
     players: ["A", "B"],
@@ -116,8 +128,8 @@ export function activeState(options?: {
     },
     tazzaUsed: options?.tazzaUsed ?? { A: false, B: false },
     inventory: options?.inventory ?? {
-      A: { SWAP: 1, REROLL: 1, SHIELD: 1 },
-      B: { SWAP: 1, REROLL: 1, SHIELD: 1 },
+      A: { SWAP: 1, REROLL: 1, SHIELD: 1, DROP: 1, DESTROY: 1, ODD: 1, EVEN: 1 },
+      B: { SWAP: 1, REROLL: 1, SHIELD: 1, DROP: 1, DESTROY: 1, ODD: 1, EVEN: 1 },
     },
     itemUsedThisTurn: options?.itemUsedThisTurn ?? false,
     held: options?.held ?? { A: false, B: false },
