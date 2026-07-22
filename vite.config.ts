@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: "127.0.0.1",
+    allowedHosts: ["flyable-portly-tumbling.ngrok-free.dev"],
     port: 5173,
     strictPort: true,
     proxy: {
