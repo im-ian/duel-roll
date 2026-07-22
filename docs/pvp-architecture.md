@@ -1,7 +1,7 @@
 # 방 코드 PVP 아키텍처
 
-- 상태: MVP 구현 기준선
-- 문서 버전: 0.1
+- 상태: 현재 구현 기준선
+- 문서 버전: 0.2
 - 최종 검토: 2026-07-22
 
 이 문서는 [게임 규칙 명세](./game-rules.md)를 서버 권위의 2인 실시간 웹 게임으로 구현하기 위한 논리 아키텍처와 데이터 계약을 정의한다. 특정 프레임워크를 고르기 전에도 규칙 엔진, 네트워크, 저장소, UI의 책임이 섞이지 않게 하는 것이 목적이다.
@@ -33,7 +33,7 @@
 1. **서버가 유일한 판정자다.** 클라이언트는 행동 의도만 보내고 주사위 값, 제거 결과, 점수, 다음 턴을 결정하지 않는다.
 2. **규칙 엔진은 순수하게 유지한다.** 네트워크, DB, WebSocket 연결 상태, 시스템 시계에 직접 접근하지 않는다.
 3. **방 코드는 인증 수단이 아니다.** 방을 찾는 공개 식별자와 좌석을 되찾는 비공개 세션 자격을 분리한다.
-4. **작은 전체 스냅샷을 활용한다.** 보드가 최대 18개 주사위뿐이므로, 승인된 행동마다 이벤트와 최신 스냅샷을 함께 보내 복구를 단순하게 한다.
+4. **작은 전체 스냅샷을 활용한다.** 양쪽 보드를 합쳐 최대 30개 주사위뿐이므로, 승인된 행동마다 이벤트와 최신 스냅샷을 함께 보내 복구를 단순하게 한다.
 5. **버전과 멱등성을 기본값으로 둔다.** 모든 게임 명령에 `expectedVersion`과 `actionId`를 넣어 중복 탭, 재전송, 늦게 도착한 패킷을 안전하게 처리한다.
 6. **화면 방향과 게임 좌표를 분리한다.** 서버의 플레이어 ID와 라인 `0..2`는 고정하며, 각 클라이언트는 자신을 편한 위치에 그린다.
 
@@ -175,6 +175,8 @@ WAITING_FOR_OPPONENT
 | `PLACE_OWN` | `{ lane }` | 내 턴, `TURN_ACTION`, 내 라인 빈칸 |
 | `ALKKAGI` | `{ lane }` | 내 턴, 같은 라인 빈칸, 상대 동일 눈 일반 주사위 |
 | `USE_TAZZA` | `{}` | 내 턴, `TURN_ACTION`, 미사용, 턴 주사위(최초 실드 포함, 보너스 실드 제외) |
+| `USE_SWAP_ITEM` | `{ lane, ownDieId, opponentDieId }` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 두 대상이 같은 라인의 양쪽 보드에 존재 |
+| `USE_REROLL_ITEM` | `{ boardOwnerPlayerId, lane, dieId }` | 내 턴, `TURN_ACTION`, 이번 턴 아이템 미사용, 수량 보유, 대상이 지정 보드·라인에 존재 |
 | `CHOOSE_TAZZA_DIE` | `{ choice: "ORIGINAL" | "CANDIDATE" }` | 내 턴, `TAZZA_CHOICE` |
 | `PLACE_BONUS_SHIELD` | `{ boardOwnerPlayerId, lane }` | 내 턴, `BONUS_PLACEMENT`, 대상 빈칸 |
 | `HOLD` | `{}` | 내 턴, `TURN_ACTION` 또는 `TAZZA_CHOICE` |
@@ -205,6 +207,8 @@ type PlayerId = string;
 type LaneIndex = 0 | 1 | 2;
 type DieFace = 1 | 2 | 3 | 4 | 5 | 6;
 type DieKind = "NORMAL" | "SHIELD";
+type ItemType = "SWAP" | "REROLL";
+type ItemInventory = Record<ItemType, number>;
 
 type Die = {
   id: string;
@@ -218,8 +222,8 @@ type Board = [Die[], Die[], Die[]];
 type TurnPending =
   | {
       source: "TURN";
-      die: Die;
-      candidateFace?: DieFace;
+      original: Die;
+      candidate?: Die;
     }
   | {
       source: "BONUS";
@@ -243,8 +247,8 @@ type GameResult = {
 };
 
 type GameState = {
-  schemaVersion: 1;
-  rulesVersion: "1";
+  schemaVersion: 2;
+  rulesVersion: "2";
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
@@ -255,6 +259,8 @@ type GameState = {
   boards: Record<PlayerId, Board>;
   pending: TurnPending | null;
   tazzaUsed: Record<PlayerId, boolean>;
+  inventory: Record<PlayerId, ItemInventory>;
+  itemUsedThisTurn: boolean;
   held: Record<PlayerId, boolean>;
   result: GameResult | null;
 };
@@ -282,6 +288,8 @@ START_GAME
        | PLACE_OWN --------------------------+
        | ALKKAGI -> ROLL_BONUS -> BONUS_PLACEMENT
        | USE_TAZZA -> TAZZA_CHOICE -> TURN_ACTION
+       | USE_SWAP_ITEM ----------------------> TURN_ACTION
+       | USE_REROLL_ITEM --------------------> TURN_ACTION
        | HOLD -------------------------------+
        | SURRENDER -> FINISHED                |
                                                v
@@ -302,7 +310,7 @@ BONUS_PLACEMENT
 
 ```ts
 function isEligible(state: GameState, playerId: PlayerId): boolean {
-  return !state.held[playerId] && countDice(state.boards[playerId]) < 9;
+  return !state.held[playerId] && countDice(state.boards[playerId]) < 15;
 }
 ```
 
@@ -396,8 +404,15 @@ interface DiceRng {
 ```json
 {
   "canUseTazza": true,
+  "canUseSwapItem": true,
+  "canUseRerollItem": true,
   "ownPlacementLanes": [0, 2],
   "alkkagiLanes": [1],
+  "swapItemLanes": [0],
+  "rerollItemTargets": [
+    { "boardOwnerPlayerId": "player-a", "lane": 0, "dieId": "die-7" },
+    { "boardOwnerPlayerId": "player-b", "lane": 2, "dieId": "die-11" }
+  ],
   "bonusTargets": []
 }
 ```
@@ -478,6 +493,9 @@ interface DiceRng {
 | `LANE_FULL` | 대상 라인에 빈칸 없음 | 하이라이트 갱신 |
 | `ALKKAGI_NOT_AVAILABLE` | 제거 대상 또는 내 빈칸 없음 | 공격 하이라이트 갱신 |
 | `TAZZA_ALREADY_USED` | 사용권 소진 | 버튼 비활성화 |
+| `ITEM_ALREADY_USED_THIS_TURN` | 현재 턴에 아이템 사용 완료 | 인벤토리 대상 선택 종료, 다음 턴까지 비활성화 |
+| `ITEM_NOT_AVAILABLE` | 해당 아이템 수량 없음 | 수량 갱신 후 아이템 비활성화 |
+| `INVALID_ITEM_TARGET` | 대상 주사위가 지정 보드·라인에 없거나 교환 라인이 다름 | 최신 스냅샷으로 타깃 강조 갱신 |
 | `STALE_VERSION` | 이전 상태를 기준으로 보냄 | 응답 스냅샷으로 교체 |
 | `DUPLICATE_ACTION_MISMATCH` | 같은 `actionId`에 다른 payload | 요청 중단, 진단 기록 |
 | `GAME_FINISHED` | 종료 뒤 게임 명령 | 결과 화면 유지 |
@@ -501,7 +519,7 @@ interface DiceRng {
 
 ### 규칙 단위 테스트
 
-- [게임 규칙 명세의 구현 수용 테스트](./game-rules.md#12-구현-수용-테스트)를 테이블 기반으로 구현한다.
+- [게임 규칙 명세의 구현 수용 테스트](./game-rules.md#13-구현-수용-테스트)를 테이블 기반으로 구현한다.
 - 스크립트 RNG로 선공, 일반 눈, 타짜 후보, 보너스 눈을 고정한다.
 - 점수, 합법 행동 selector, 다음 플레이어, 승패 판정을 각각 독립 테스트한다.
 
@@ -509,12 +527,13 @@ interface DiceRng {
 
 임의의 합법 명령 시퀀스 뒤에 아래 속성을 검사한다.
 
-- 라인 길이는 절대 3을 넘지 않는다.
+- 라인 길이는 절대 5를 넘지 않는다.
 - 눈은 항상 `1..6`이다.
 - 실드는 제거 이벤트의 대상이 되지 않는다.
 - `FINISHED` 뒤 상태는 게임 명령으로 바뀌지 않는다.
 - 저장된 점수와 보드 재계산 점수가 다를 수 없다.
 - 같은 상태·명령·스크립트 RNG는 같은 전이 결과를 만든다.
+- 아이템 명령 뒤 pending 턴 주사위와 현재 플레이어는 유지되고, 같은 턴의 두 번째 아이템은 거절된다.
 
 ### 애플리케이션 통합 테스트
 

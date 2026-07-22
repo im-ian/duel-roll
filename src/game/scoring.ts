@@ -7,6 +7,7 @@ import type {
   LaneIndex,
   PlayerId,
 } from "./types";
+import { BOARD_CAPACITY } from "./constants";
 
 export function createEmptyBoard(): Board {
   return [[], [], []];
@@ -45,7 +46,7 @@ export function isEligible(state: GameState, playerId: PlayerId): boolean {
   if (held === undefined) {
     throw new Error(`Missing held state for player: ${playerId}`);
   }
-  return !held && countDice(boardOf(state, playerId)) < 9;
+  return !held && countDice(boardOf(state, playerId)) < BOARD_CAPACITY;
 }
 
 export function opponentOf(

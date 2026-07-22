@@ -87,11 +87,13 @@ export function activeState(options?: {
   boards?: Record<PlayerId, Board>;
   held?: Record<PlayerId, boolean>;
   tazzaUsed?: Record<PlayerId, boolean>;
+  inventory?: GameState["inventory"];
+  itemUsedThisTurn?: boolean;
 }): GameState {
   const currentPlayerId = options?.currentPlayerId ?? "A";
   return {
-    schemaVersion: 1,
-    rulesVersion: "1",
+    schemaVersion: 2,
+    rulesVersion: "2",
     gameId: "game_test",
     version: 0,
     players: ["A", "B"],
@@ -113,6 +115,11 @@ export function activeState(options?: {
       ),
     },
     tazzaUsed: options?.tazzaUsed ?? { A: false, B: false },
+    inventory: options?.inventory ?? {
+      A: { SWAP: 1, REROLL: 1 },
+      B: { SWAP: 1, REROLL: 1 },
+    },
+    itemUsedThisTurn: options?.itemUsedThisTurn ?? false,
     held: options?.held ?? { A: false, B: false },
     result: null,
   };

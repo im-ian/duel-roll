@@ -65,11 +65,24 @@ export type ServerMessage =
 
 const LaneSchema = z.union([z.literal(0), z.literal(1), z.literal(2)]);
 const ActionIdSchema = z.string().min(8).max(128);
+const DieIdSchema = z.string().min(1).max(128);
 
 export const GameCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("PLACE_OWN"), lane: LaneSchema }),
   z.object({ type: z.literal("ALKKAGI"), lane: LaneSchema }),
   z.object({ type: z.literal("USE_TAZZA") }),
+  z.object({
+    type: z.literal("USE_SWAP_ITEM"),
+    lane: LaneSchema,
+    ownDieId: DieIdSchema,
+    opponentDieId: DieIdSchema,
+  }),
+  z.object({
+    type: z.literal("USE_REROLL_ITEM"),
+    boardOwnerPlayerId: z.string().min(1),
+    lane: LaneSchema,
+    dieId: DieIdSchema,
+  }),
   z.object({
     type: z.literal("CHOOSE_TAZZA_DIE"),
     choice: z.enum(["ORIGINAL", "CANDIDATE"]),

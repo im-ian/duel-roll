@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import type {
   Board,
@@ -19,7 +19,14 @@ import {
 import { useRoomSession } from "./use-room-session";
 import type { ConnectionState, PendingAction } from "./use-room-session";
 
-type Overlay = "RULES" | "HOLD" | "SURRENDER" | null;
+type Overlay = "RULES" | "HOLD" | "SURRENDER" | "INVENTORY" | null;
+type ItemMode =
+  | {
+      type: "SWAP";
+      ownSelection?: { lane: LaneIndex; dieId: string };
+    }
+  | { type: "REROLL" }
+  | null;
 
 function normalizeCode(value: string): string {
   return value.toUpperCase().replace(/[\s-]/g, "").slice(0, 6);
@@ -239,6 +246,8 @@ function eventText(event: GameEvent, selfPlayerId: PlayerId): string {
     case "DIE_PLACED": return `${who(event.playerId)} ${event.lane + 1}번 라인에 놓았습니다.`;
     case "DICE_REMOVED": return `${who(event.byPlayerId)} 알까기로 ${event.dice.length}개를 제거했습니다.`;
     case "TAZZA_USED": return `${who(event.playerId)} 타짜를 사용했습니다.`;
+    case "DICE_SWAPPED": return `${who(event.playerId)} ${event.lane + 1}번 라인의 주사위를 교환했습니다.`;
+    case "DIE_REROLLED": return `${who(event.playerId)} ${event.boardOwnerPlayerId === selfPlayerId ? "내" : "상대"} 주사위를 ${event.previousDie.face}→${event.die.face}로 변환했습니다.`;
     case "PLAYER_HELD": return `${who(event.playerId)} 홀드했습니다.`;
     case "PLAYER_SURRENDERED": return `${who(event.playerId)} 항복했습니다.`;
     case "GAME_FINISHED": return "경기가 끝났습니다.";
@@ -251,9 +260,10 @@ function RulesSheet({ onClose }: { onClose: () => void }) {
     <Sheet title="90초 규칙" onClose={onClose}>
       <ol className="rules-list">
         <li><strong>같은 눈을 모으세요.</strong><span>각 라인은 같은 눈이 겹칠수록 보너스가 커집니다. 5+5는 15점, 5+5+5는 25점.</span></li>
-        <li><strong>라인을 선택해 놓으세요.</strong><span>내 3개 라인 중 빈 라인에 현재 주사위를 배치합니다.</span></li>
+        <li><strong>라인을 선택해 놓으세요.</strong><span>내 3개 라인에 각각 최대 5개까지 현재 주사위를 배치합니다.</span></li>
         <li><strong>같은 눈은 알까기.</strong><span>상대 같은 라인의 동일한 일반 주사위를 전부 지우고 보너스 실드를 받습니다.</span></li>
         <li><strong>타짜는 경기당 한 번.</strong><span>현재 눈과 새 눈 중 하나를 고를 수 있습니다.</span></li>
+        <li><strong>아이템으로 판을 바꾸세요.</strong><span>같은 라인의 양쪽 주사위를 교환하거나, 놓인 주사위 하나의 눈을 바꿀 수 있습니다. 한 턴에 아이템은 1개만 사용하며 이후에도 착수할 수 있습니다.</span></li>
         <li><strong>2개 라인을 이기면 승리.</strong><span>라인 승수가 같으면 전체 점수로 판정합니다.</span></li>
       </ol>
       <button className="button button--primary" onClick={onClose}>알겠어요</button>
@@ -281,6 +291,14 @@ function GameScreen({
   onRules: () => void;
 }) {
   const [overlay, setOverlay] = useState<Overlay>(null);
+  const [itemMode, setItemMode] = useState<ItemMode>(null);
+  const gameVersion = room.game?.state.version;
+
+  useEffect(() => {
+    setItemMode(null);
+    setOverlay((current) => current === "INVENTORY" ? null : current);
+  }, [gameVersion]);
+
   const game = room.game;
   if (!game) return <Spinner label="경기를 준비하는 중" />;
   const state = game.state;
@@ -300,21 +318,44 @@ function GameScreen({
   const controlsLocked = connection !== "OPEN" || Boolean(pending);
   const currentDie = pendingDie(state);
   const isBonus = state.phase === "BONUS_PLACEMENT";
+  const inventory = state.inventory[selfId] ?? { SWAP: 0, REROLL: 0 };
+  const remainingItems = inventory.SWAP + inventory.REROLL;
+  const swapItemStatus = state.itemUsedThisTurn
+    ? "이번 턴 사용 완료"
+    : inventory.SWAP <= 0
+      ? "소진됨"
+      : game.legalActions.canUseSwapItem
+        ? "사용 가능"
+        : "같은 라인에 교환 대상이 없습니다.";
+  const rerollItemStatus = state.itemUsedThisTurn
+    ? "이번 턴 사용 완료"
+    : inventory.REROLL <= 0
+      ? "소진됨"
+      : game.legalActions.canUseRerollItem
+        ? "사용 가능"
+        : "보드에 놓인 주사위가 없습니다.";
 
   const hasBonusTarget = (boardOwnerPlayerId: PlayerId, lane: LaneIndex) =>
     game.legalActions.bonusTargets.some(
       (target) => target.boardOwnerPlayerId === boardOwnerPlayerId && target.lane === lane,
     );
 
-  const instruction = !isMyTurn
-    ? state.phase === "TAZZA_CHOICE"
+  let instruction = "놓거나 공격할 라인을 선택하세요.";
+  if (itemMode?.type === "REROLL") {
+    instruction = "변환할 내 주사위 또는 상대 주사위를 선택하세요.";
+  } else if (itemMode?.type === "SWAP") {
+    instruction = itemMode.ownSelection
+      ? "같은 라인의 상대 주사위를 선택하세요."
+      : "먼저 교환할 내 주사위를 선택하세요.";
+  } else if (!isMyTurn) {
+    instruction = state.phase === "TAZZA_CHOICE"
       ? "상대가 타짜 주사위를 고르는 중입니다."
-      : "상대의 선택을 기다리는 중입니다."
-    : state.phase === "TAZZA_CHOICE"
-      ? "기존 눈과 새 눈 중 하나를 선택하세요."
-      : state.phase === "BONUS_PLACEMENT"
-        ? "실드를 놓을 보드와 라인을 선택하세요."
-        : "놓거나 공격할 라인을 선택하세요.";
+      : "상대의 선택을 기다리는 중입니다.";
+  } else if (state.phase === "TAZZA_CHOICE") {
+    instruction = "기존 눈과 새 눈 중 하나를 선택하세요.";
+  } else if (state.phase === "BONUS_PLACEMENT") {
+    instruction = "실드를 놓을 보드와 라인을 선택하세요.";
+  }
 
   return (
     <main className="game shell shell--game">
@@ -341,6 +382,70 @@ function GameScreen({
           const canAttack = game.legalActions.alkkagiLanes.includes(lane);
           const bonusOwn = hasBonusTarget(selfId, lane);
           const bonusOpponent = hasBonusTarget(opponentId, lane);
+          const ownSelectableDieIds = new Set<string>();
+          const opponentSelectableDieIds = new Set<string>();
+          const swapSelection = itemMode?.type === "SWAP"
+            ? itemMode.ownSelection
+            : undefined;
+
+          if (!controlsLocked && itemMode?.type === "REROLL") {
+            for (const target of game.legalActions.rerollItemTargets) {
+              if (target.lane !== lane) continue;
+              if (target.boardOwnerPlayerId === selfId) {
+                ownSelectableDieIds.add(target.dieId);
+              }
+              if (target.boardOwnerPlayerId === opponentId) {
+                opponentSelectableDieIds.add(target.dieId);
+              }
+            }
+          }
+          if (!controlsLocked && itemMode?.type === "SWAP") {
+            if (game.legalActions.swapItemLanes.includes(lane)) {
+              for (const die of ownBoard[lane]) ownSelectableDieIds.add(die.id);
+            }
+            if (swapSelection?.lane === lane) {
+              for (const die of opponentBoard[lane]) {
+                opponentSelectableDieIds.add(die.id);
+              }
+            }
+          }
+
+          const selectOwnDie = itemMode?.type === "SWAP"
+            ? (die: Die) => setItemMode((current) => {
+                if (current?.type !== "SWAP") return current;
+                if (current.ownSelection?.dieId === die.id) {
+                  return { type: "SWAP" };
+                }
+                return { type: "SWAP", ownSelection: { lane, dieId: die.id } };
+              })
+            : itemMode?.type === "REROLL"
+              ? (die: Die) => {
+                  onCommand(
+                    { type: "USE_REROLL_ITEM", boardOwnerPlayerId: selfId, lane, dieId: die.id },
+                    `${lane + 1}번 라인 내 주사위 변환 중`,
+                  );
+                }
+              : undefined;
+          const selectOpponentDie = itemMode?.type === "SWAP" && swapSelection?.lane === lane
+            ? (die: Die) => {
+                onCommand(
+                  {
+                    type: "USE_SWAP_ITEM",
+                    lane,
+                    ownDieId: swapSelection.dieId,
+                    opponentDieId: die.id,
+                  },
+                  `${lane + 1}번 라인 주사위 교환 중`,
+                );
+              }
+            : itemMode?.type === "REROLL"
+              ? (die: Die) => {
+                  onCommand(
+                    { type: "USE_REROLL_ITEM", boardOwnerPlayerId: opponentId, lane, dieId: die.id },
+                    `${lane + 1}번 라인 상대 주사위 변환 중`,
+                  );
+                }
+              : undefined;
           return (
             <LaneCard
               key={lane}
@@ -350,20 +455,25 @@ function GameScreen({
               opponentScore={opponentScores[lane]}
               ownScore={ownScores[lane]}
               disabled={controlsLocked}
-              opponentAction={canAttack ? {
+              opponentSelectableDieIds={opponentSelectableDieIds}
+              ownSelectableDieIds={ownSelectableDieIds}
+              selectedDieId={itemMode?.type === "SWAP" ? itemMode.ownSelection?.dieId : undefined}
+              onOpponentDieClick={selectOpponentDie}
+              onOwnDieClick={selectOwnDie}
+              opponentAction={!itemMode && canAttack ? {
                 label: "알까기",
                 tone: "attack",
                 run: () => { onCommand({ type: "ALKKAGI", lane }, `${lane + 1}번 라인 공격 중`); },
-              } : bonusOpponent ? {
+              } : !itemMode && bonusOpponent ? {
                 label: "상대에게 실드",
                 tone: "bonus",
                 run: () => { onCommand({ type: "PLACE_BONUS_SHIELD", boardOwnerPlayerId: opponentId, lane }, "보너스 실드 배치 중"); },
               } : undefined}
-              ownAction={canPlace ? {
+              ownAction={!itemMode && canPlace ? {
                 label: "놓기",
                 tone: "place",
                 run: () => { onCommand({ type: "PLACE_OWN", lane }, `${lane + 1}번 라인 배치 중`); },
-              } : bonusOwn ? {
+              } : !itemMode && bonusOwn ? {
                 label: "내게 실드",
                 tone: "bonus",
                 run: () => { onCommand({ type: "PLACE_BONUS_SHIELD", boardOwnerPlayerId: selfId, lane }, "보너스 실드 배치 중"); },
@@ -388,27 +498,88 @@ function GameScreen({
           {isBonus && <span className="bonus-orbit"><ShieldIcon /></span>}
         </div>
         <div className="action-dock__copy">
-          <p className="eyebrow">{isBonus ? "BONUS SHIELD" : isMyTurn ? "CURRENT ROLL" : "OPPONENT ROLL"}</p>
+          <p className="eyebrow">{itemMode ? "SELECT ITEM TARGET" : isBonus ? "BONUS SHIELD" : isMyTurn ? "CURRENT ROLL" : "OPPONENT ROLL"}</p>
           <strong>{pending?.label ?? instruction}</strong>
           {isBonus && <small>상대 보드에 놓으면 상대 점수에 포함됩니다.</small>}
         </div>
         {isMyTurn && state.phase === "TURN_ACTION" && (
-          <div className="action-dock__buttons">
-            <button
-              className="button button--tazza"
-              disabled={!game.legalActions.canUseTazza || controlsLocked}
-              onClick={() => onCommand({ type: "USE_TAZZA" }, "타짜 주사위 확인 중")}
-            >
-              타짜 <small>{state.tazzaUsed[selfId] ? "사용 완료" : "1회"}</small>
-            </button>
-            <button
-              className="button button--ghost"
-              disabled={!game.legalActions.canHold || controlsLocked}
-              onClick={() => setOverlay("HOLD")}
-            >홀드</button>
+          <div className={`action-dock__buttons ${itemMode ? "action-dock__buttons--item-mode" : ""}`}>
+            {itemMode ? (
+              <button
+                className="button button--ghost"
+                disabled={controlsLocked}
+                onClick={() => setItemMode(null)}
+              >아이템 선택 취소</button>
+            ) : (
+              <>
+                <button
+                  className="button button--tazza"
+                  disabled={!game.legalActions.canUseTazza || controlsLocked}
+                  onClick={() => onCommand({ type: "USE_TAZZA" }, "타짜 주사위 확인 중")}
+                >
+                  타짜 <small>{state.tazzaUsed[selfId] ? "완료" : "1회"}</small>
+                </button>
+                <button
+                  className="button button--inventory"
+                  disabled={controlsLocked}
+                  onClick={() => setOverlay("INVENTORY")}
+                >
+                  아이템 <small>{remainingItems}개</small>
+                </button>
+                <button
+                  className="button button--ghost"
+                  disabled={!game.legalActions.canHold || controlsLocked}
+                  onClick={() => setOverlay("HOLD")}
+                >홀드</button>
+              </>
+            )}
           </div>
         )}
       </footer>
+
+      {overlay === "INVENTORY" && (
+        <Sheet
+          title="인벤토리"
+          description="한 턴에 아이템은 하나만 사용할 수 있습니다. 사용 후에도 현재 주사위를 놓거나 공격할 수 있습니다."
+          onClose={() => setOverlay(null)}
+        >
+          <button
+            className="item-card"
+            disabled={!game.legalActions.canUseSwapItem || controlsLocked}
+            onClick={() => {
+              setItemMode({ type: "SWAP" });
+              setOverlay(null);
+            }}
+          >
+            <span className="item-card__icon" aria-hidden="true">⇄</span>
+            <span className="item-card__copy">
+              <strong>라인 교환</strong>
+              <small>내 주사위와 같은 라인의 상대 주사위를 통째로 교환합니다.</small>
+              <em>{swapItemStatus}</em>
+            </span>
+            <span className="item-card__count">×{inventory.SWAP}</span>
+          </button>
+          <button
+            className="item-card item-card--reroll"
+            disabled={!game.legalActions.canUseRerollItem || controlsLocked}
+            onClick={() => {
+              setItemMode({ type: "REROLL" });
+              setOverlay(null);
+            }}
+          >
+            <span className="item-card__icon" aria-hidden="true">↻</span>
+            <span className="item-card__copy">
+              <strong>눈 변환</strong>
+              <small>내 주사위 또는 상대 주사위 하나를 다른 무작위 눈으로 바꿉니다.</small>
+              <em>{rerollItemStatus}</em>
+            </span>
+            <span className="item-card__count">×{inventory.REROLL}</span>
+          </button>
+          {state.itemUsedThisTurn && (
+            <p className="inventory-status">이번 턴에는 이미 아이템을 사용했습니다.</p>
+          )}
+        </Sheet>
+      )}
 
       {isMyTurn && state.phase === "TAZZA_CHOICE" && state.pending?.source === "TURN" && state.pending.candidate && (
         <Sheet title="어느 주사위를 사용할까요?" description="한 번 선택하면 되돌릴 수 없습니다.">

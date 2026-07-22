@@ -2,6 +2,9 @@ export type PlayerId = string;
 export type LaneIndex = 0 | 1 | 2;
 export type DieFace = 1 | 2 | 3 | 4 | 5 | 6;
 export type DieKind = "NORMAL" | "SHIELD";
+export type ItemType = "SWAP" | "REROLL";
+
+export type ItemInventory = Record<ItemType, number>;
 
 export type Die = {
   id: string;
@@ -44,8 +47,8 @@ export type GameResult = {
 };
 
 export type GameState = {
-  schemaVersion: 1;
-  rulesVersion: "1";
+  schemaVersion: 2;
+  rulesVersion: "2";
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
@@ -56,6 +59,8 @@ export type GameState = {
   boards: Record<PlayerId, Board>;
   pending: TurnPending | null;
   tazzaUsed: Record<PlayerId, boolean>;
+  inventory: Record<PlayerId, ItemInventory>;
+  itemUsedThisTurn: boolean;
   held: Record<PlayerId, boolean>;
   result: GameResult | null;
 };
@@ -64,6 +69,18 @@ export type GameCommand =
   | { type: "PLACE_OWN"; lane: LaneIndex }
   | { type: "ALKKAGI"; lane: LaneIndex }
   | { type: "USE_TAZZA" }
+  | {
+      type: "USE_SWAP_ITEM";
+      lane: LaneIndex;
+      ownDieId: string;
+      opponentDieId: string;
+    }
+  | {
+      type: "USE_REROLL_ITEM";
+      boardOwnerPlayerId: PlayerId;
+      lane: LaneIndex;
+      dieId: string;
+    }
   | {
       type: "CHOOSE_TAZZA_DIE";
       choice: "ORIGINAL" | "CANDIDATE";
@@ -107,6 +124,21 @@ export type GameEvent =
     }
   | { type: "TAZZA_USED"; playerId: PlayerId }
   | {
+      type: "DICE_SWAPPED";
+      playerId: PlayerId;
+      lane: LaneIndex;
+      ownDie: Die;
+      opponentDie: Die;
+    }
+  | {
+      type: "DIE_REROLLED";
+      playerId: PlayerId;
+      boardOwnerPlayerId: PlayerId;
+      lane: LaneIndex;
+      previousDie: Die;
+      die: Die;
+    }
+  | {
       type: "TAZZA_SELECTED";
       playerId: PlayerId;
       die: Die;
@@ -117,11 +149,19 @@ export type GameEvent =
 
 export type LegalActions = {
   canUseTazza: boolean;
+  canUseSwapItem: boolean;
+  canUseRerollItem: boolean;
   canHold: boolean;
   canSurrender: boolean;
   canChooseTazza: boolean;
   ownPlacementLanes: LaneIndex[];
   alkkagiLanes: LaneIndex[];
+  swapItemLanes: LaneIndex[];
+  rerollItemTargets: Array<{
+    boardOwnerPlayerId: PlayerId;
+    lane: LaneIndex;
+    dieId: string;
+  }>;
   bonusTargets: Array<{
     boardOwnerPlayerId: PlayerId;
     lane: LaneIndex;

@@ -9,6 +9,12 @@ import { RuleError } from "../../src/game/errors";
 import { isEligible } from "../../src/game/scoring";
 import { activeState, board, context, die } from "../helpers";
 
+function fullLane(prefix: string, createdBy = "A") {
+  return ([1, 2, 3, 4, 5] as const).map((face, index) =>
+    die(`${prefix}-${index + 1}`, face, "NORMAL", createdBy),
+  );
+}
+
 describe("game engine", () => {
   it("starts with a server-selected first player and an opening shield", () => {
     const transition = createGame(
@@ -22,6 +28,11 @@ describe("game engine", () => {
       source: "TURN",
       original: { face: 4, kind: "SHIELD", createdBy: "B" },
     });
+    expect(transition.state.inventory).toEqual({
+      A: { SWAP: 1, REROLL: 1 },
+      B: { SWAP: 1, REROLL: 1 },
+    });
+    expect(transition.state.itemUsedThisTurn).toBe(false);
     expect(transition.events.map((event) => event.type)).toEqual([
       "GAME_STARTED",
       "TURN_STARTED",
@@ -124,7 +135,7 @@ describe("game engine", () => {
       pendingFace: 6,
       boards: {
         A: board(
-          [die("a1", 1), die("a2", 2), die("a3", 3)],
+          fullLane("a"),
           [],
           [],
         ),
@@ -155,9 +166,9 @@ describe("game engine", () => {
       pendingFace: 5,
       boards: {
         A: board(
-          [die("a5", 5), die("a2", 2), die("a3", 3)],
-          [die("a4", 1), die("a5b", 2), die("a6", 3)],
-          [die("a7", 1), die("a8", 2), die("a9", 3)],
+          fullLane("a-lane-1"),
+          fullLane("a-lane-2"),
+          fullLane("a-lane-3"),
         ),
         B: board([], [], []),
       },
@@ -194,9 +205,14 @@ describe("game engine", () => {
       boards: {
         A: board([die("a", 1)], [], []),
         B: board(
-          [die("b1", 1), die("b2", 2), die("b3", 3)],
-          [die("b4", 1), die("b5", 2), die("b6", 3)],
-          [die("b7", 1), die("b8", 2)],
+          fullLane("b-lane-1", "B"),
+          fullLane("b-lane-2", "B"),
+          [
+            die("b-lane-3-1", 1, "NORMAL", "B"),
+            die("b-lane-3-2", 2, "NORMAL", "B"),
+            die("b-lane-3-3", 3, "NORMAL", "B"),
+            die("b-lane-3-4", 4, "NORMAL", "B"),
+          ],
         ),
       },
     });
@@ -227,12 +243,194 @@ describe("game engine", () => {
     });
   });
 
+  it("allows five dice per lane and rejects a sixth placement", () => {
+    const fourDice = fullLane("four").slice(0, 4);
+    const placed = applyCommand(
+      activeState({
+        boards: {
+          A: board(fourDice, [], []),
+          B: board([], [], []),
+        },
+      }),
+      "A",
+      { type: "PLACE_OWN", lane: 0 },
+      context({ rolls: [2] }),
+    );
+    expect(placed.state.boards.A?.[0]).toHaveLength(5);
+
+    expect(() =>
+      applyCommand(
+        activeState({
+          boards: {
+            A: board(fullLane("full"), [], []),
+            B: board([], [], []),
+          },
+        }),
+        "A",
+        { type: "PLACE_OWN", lane: 0 },
+        context(),
+      ),
+    ).toThrowError(expect.objectContaining({ code: "LANE_FULL" }));
+  });
+
+  it("swaps whole dice across the same lane without ending the turn", () => {
+    const state = activeState({
+      boards: {
+        A: board([die("own", 2, "NORMAL", "A")], [], []),
+        B: board([die("opponent", 6, "SHIELD", "B")], [], []),
+      },
+    });
+
+    const swapped = applyCommand(
+      state,
+      "A",
+      {
+        type: "USE_SWAP_ITEM",
+        lane: 0,
+        ownDieId: "own",
+        opponentDieId: "opponent",
+      },
+      context(),
+    );
+
+    expect(swapped.state.boards.A?.[0]).toEqual([
+      die("opponent", 6, "SHIELD", "B"),
+    ]);
+    expect(swapped.state.boards.B?.[0]).toEqual([
+      die("own", 2, "NORMAL", "A"),
+    ]);
+    expect(swapped.state.inventory.A).toEqual({ SWAP: 0, REROLL: 1 });
+    expect(swapped.state.itemUsedThisTurn).toBe(true);
+    expect(swapped.state.currentPlayerId).toBe("A");
+    expect(swapped.state.pending).toEqual(state.pending);
+    expect(swapped.events).toMatchObject([
+      { type: "DICE_SWAPPED", playerId: "A", lane: 0 },
+    ]);
+  });
+
+  it("rerolls an opponent shield while preserving its identity and kind", () => {
+    const state = activeState({
+      boards: {
+        A: board([], [], []),
+        B: board([], [], [die("target", 4, "SHIELD", "B")]),
+      },
+    });
+
+    const rerolled = applyCommand(
+      state,
+      "A",
+      {
+        type: "USE_REROLL_ITEM",
+        boardOwnerPlayerId: "B",
+        lane: 2,
+        dieId: "target",
+      },
+      context({ differentRolls: [6] }),
+    );
+
+    expect(rerolled.state.boards.B?.[2]).toEqual([
+      die("target", 6, "SHIELD", "B"),
+    ]);
+    expect(rerolled.state.inventory.A).toEqual({ SWAP: 1, REROLL: 0 });
+    expect(rerolled.state.itemUsedThisTurn).toBe(true);
+    expect(rerolled.state.pending).toEqual(state.pending);
+    expect(rerolled.events).toMatchObject([
+      {
+        type: "DIE_REROLLED",
+        playerId: "A",
+        boardOwnerPlayerId: "B",
+        previousDie: { face: 4 },
+        die: { id: "target", face: 6, kind: "SHIELD" },
+      },
+    ]);
+  });
+
+  it("allows placement after an item and resets the item limit on the next turn", () => {
+    const state = activeState({
+      boards: {
+        A: board([die("own", 2)], [], []),
+        B: board([die("opponent", 5, "NORMAL", "B")], [], []),
+      },
+    });
+    const engineContext = context({ rolls: [3], differentRolls: [4] });
+    const used = applyCommand(
+      state,
+      "A",
+      {
+        type: "USE_REROLL_ITEM",
+        boardOwnerPlayerId: "B",
+        lane: 0,
+        dieId: "opponent",
+      },
+      engineContext,
+    );
+    expect(getLegalActions(used.state, "A")).toMatchObject({
+      canUseSwapItem: false,
+      canUseRerollItem: false,
+      swapItemLanes: [],
+      rerollItemTargets: [],
+    });
+
+    expect(() =>
+      applyCommand(
+        used.state,
+        "A",
+        {
+          type: "USE_SWAP_ITEM",
+          lane: 0,
+          ownDieId: "own",
+          opponentDieId: "opponent",
+        },
+        engineContext,
+      ),
+    ).toThrowError(expect.objectContaining({ code: "ITEM_ALREADY_USED_THIS_TURN" }));
+
+    const placed = applyCommand(
+      used.state,
+      "A",
+      { type: "PLACE_OWN", lane: 1 },
+      engineContext,
+    );
+    expect(placed.state.boards.A?.[1]).toHaveLength(1);
+    expect(placed.state.currentPlayerId).toBe("B");
+    expect(placed.state.itemUsedThisTurn).toBe(false);
+    expect(getLegalActions(placed.state, "B")).toMatchObject({
+      canUseSwapItem: true,
+      canUseRerollItem: true,
+    });
+  });
+
+  it("rejects item targets that are not in the declared lane", () => {
+    const state = activeState({
+      boards: {
+        A: board([die("own", 2)], [], []),
+        B: board([], [die("opponent", 5, "NORMAL", "B")], []),
+      },
+    });
+
+    expect(() =>
+      applyCommand(
+        state,
+        "A",
+        {
+          type: "USE_SWAP_ITEM",
+          lane: 0,
+          ownDieId: "own",
+          opponentDieId: "opponent",
+        },
+        context(),
+      ),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_ITEM_TARGET" }));
+    expect(state.inventory.A).toEqual({ SWAP: 1, REROLL: 1 });
+    expect(state.itemUsedThisTurn).toBe(false);
+  });
+
   it("exposes only currently legal lane actions", () => {
     const state = activeState({
       pendingFace: 4,
       boards: {
         A: board(
-          [die("a1", 1), die("a2", 2), die("a3", 3)],
+          fullLane("a"),
           [],
           [],
         ),
@@ -244,6 +442,9 @@ describe("game engine", () => {
       ownPlacementLanes: [1, 2],
       alkkagiLanes: [1],
       canUseTazza: true,
+      canUseSwapItem: true,
+      canUseRerollItem: true,
+      swapItemLanes: [0],
       canHold: true,
     });
     expect(getLegalActions(state, "B")).toMatchObject({

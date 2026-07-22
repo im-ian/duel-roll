@@ -1,4 +1,5 @@
 import { RuleError } from "./errors";
+import { LANE_CAPACITY, LANE_COUNT, STARTING_ITEM_COUNT } from "./constants";
 import {
   boardOf,
   calculateResult,
@@ -16,6 +17,8 @@ import type {
   GameCommand,
   GameEvent,
   GameState,
+  ItemInventory,
+  ItemType,
   LaneIndex,
   LegalActions,
   PlayerId,
@@ -49,8 +52,11 @@ function assertCurrentPlayer(state: GameState, playerId: PlayerId): void {
 }
 
 function assertLane(lane: number): asserts lane is LaneIndex {
-  if (!Number.isInteger(lane) || lane < 0 || lane > 2) {
-    throw new RuleError("INVALID_LANE", "Lane must be 0, 1, or 2.");
+  if (!Number.isInteger(lane) || lane < 0 || lane >= LANE_COUNT) {
+    throw new RuleError(
+      "INVALID_LANE",
+      `Lane must be between 0 and ${LANE_COUNT - 1}.`,
+    );
   }
 }
 
@@ -81,8 +87,46 @@ function rollTurnDie(
   state.currentPlayerId = playerId;
   state.phase = "TURN_ACTION";
   state.pending = { source: "TURN", original: die };
+  state.itemUsedThisTurn = false;
   events.push({ type: "TURN_STARTED", playerId, turnNumber: state.turnNumber });
   events.push({ type: "DIE_ROLLED", playerId, die, source: "TURN" });
+}
+
+function inventoryOf(state: GameState, playerId: PlayerId): ItemInventory {
+  const inventory = state.inventory[playerId];
+  if (!inventory) {
+    throw new RuleError(
+      "INVARIANT_VIOLATION",
+      `Missing inventory for ${playerId}.`,
+    );
+  }
+  return inventory;
+}
+
+function consumeItem(
+  state: GameState,
+  playerId: PlayerId,
+  itemType: ItemType,
+): void {
+  assertPhase(state, ["TURN_ACTION"]);
+  if (state.itemUsedThisTurn) {
+    throw new RuleError(
+      "ITEM_ALREADY_USED_THIS_TURN",
+      "Only one item can be used during a turn.",
+    );
+  }
+
+  const inventory = inventoryOf(state, playerId);
+  if (inventory[itemType] <= 0) {
+    throw new RuleError(
+      "ITEM_NOT_AVAILABLE",
+      `The ${itemType.toLowerCase()} item is no longer available.`,
+      { itemType },
+    );
+  }
+
+  inventory[itemType] -= 1;
+  state.itemUsedThisTurn = true;
 }
 
 function finishNormally(state: GameState, events: GameEvent[]): void {
@@ -144,8 +188,8 @@ export function createGame(
     context,
   );
   const state: GameState = {
-    schemaVersion: 1,
-    rulesVersion: "1",
+    schemaVersion: 2,
+    rulesVersion: "2",
     gameId: context.ids.next("game"),
     version: 0,
     players,
@@ -162,6 +206,17 @@ export function createGame(
       [players[0]]: false,
       [players[1]]: false,
     },
+    inventory: {
+      [players[0]]: {
+        SWAP: STARTING_ITEM_COUNT,
+        REROLL: STARTING_ITEM_COUNT,
+      },
+      [players[1]]: {
+        SWAP: STARTING_ITEM_COUNT,
+        REROLL: STARTING_ITEM_COUNT,
+      },
+    },
+    itemUsedThisTurn: false,
     held: {
       [players[0]]: false,
       [players[1]]: false,
@@ -218,7 +273,7 @@ export function applyCommand(
       assertPhase(state, ["TURN_ACTION"]);
       assertLane(command.lane);
       const lane = boardOf(state, actorPlayerId)[command.lane];
-      if (lane.length >= 3) {
+      if (lane.length >= LANE_CAPACITY) {
         throw new RuleError("LANE_FULL", "The selected lane is full.");
       }
 
@@ -253,7 +308,7 @@ export function applyCommand(
           { reason: "DIE_IS_SHIELD" },
         );
       }
-      if (ownLane.length >= 3) {
+      if (ownLane.length >= LANE_CAPACITY) {
         throw new RuleError(
           "ALKKAGI_NOT_AVAILABLE",
           "The actor's corresponding lane is full.",
@@ -341,6 +396,83 @@ export function applyCommand(
       break;
     }
 
+    case "USE_SWAP_ITEM": {
+      assertPhase(state, ["TURN_ACTION"]);
+      assertLane(command.lane);
+      consumeItem(state, actorPlayerId, "SWAP");
+
+      const opponentPlayerId = opponentOf(state.players, actorPlayerId);
+      const ownLane = boardOf(state, actorPlayerId)[command.lane];
+      const opponentLane = boardOf(state, opponentPlayerId)[command.lane];
+      const ownIndex = ownLane.findIndex((die) => die.id === command.ownDieId);
+      const opponentIndex = opponentLane.findIndex(
+        (die) => die.id === command.opponentDieId,
+      );
+      if (ownIndex < 0 || opponentIndex < 0) {
+        throw new RuleError(
+          "INVALID_ITEM_TARGET",
+          "Swap targets must be placed dice on opposite boards in the same lane.",
+          { itemType: "SWAP", lane: command.lane },
+        );
+      }
+
+      const ownDie = ownLane[ownIndex];
+      const opponentDie = opponentLane[opponentIndex];
+      invariant(ownDie && opponentDie, "Swap targets disappeared unexpectedly.");
+      ownLane[ownIndex] = opponentDie;
+      opponentLane[opponentIndex] = ownDie;
+      events.push({
+        type: "DICE_SWAPPED",
+        playerId: actorPlayerId,
+        lane: command.lane,
+        ownDie,
+        opponentDie,
+      });
+      break;
+    }
+
+    case "USE_REROLL_ITEM": {
+      assertPhase(state, ["TURN_ACTION"]);
+      assertLane(command.lane);
+      if (!state.players.includes(command.boardOwnerPlayerId)) {
+        throw new RuleError(
+          "INVALID_BOARD_OWNER",
+          "Reroll target must belong to a player in this game.",
+        );
+      }
+      consumeItem(state, actorPlayerId, "REROLL");
+
+      const lane = boardOf(state, command.boardOwnerPlayerId)[command.lane];
+      const targetIndex = lane.findIndex((die) => die.id === command.dieId);
+      const target = lane[targetIndex];
+      if (targetIndex < 0 || !target) {
+        throw new RuleError(
+          "INVALID_ITEM_TARGET",
+          "Reroll target must be a placed die in the selected lane.",
+          { itemType: "REROLL", lane: command.lane },
+        );
+      }
+
+      const nextFace = context.rng.rollDifferentFace(target.face);
+      if (nextFace === target.face) {
+        throw new RuleError(
+          "INVARIANT_VIOLATION",
+          "Reroll item must produce a different face.",
+        );
+      }
+      const rerolledDie = { ...target, face: nextFace };
+      lane[targetIndex] = rerolledDie;
+      events.push({
+        type: "DIE_REROLLED",
+        playerId: actorPlayerId,
+        boardOwnerPlayerId: command.boardOwnerPlayerId,
+        lane: command.lane,
+        previousDie: target,
+        die: rerolledDie,
+      });
+      break;
+    }
+
     case "CHOOSE_TAZZA_DIE": {
       assertPhase(state, ["TAZZA_CHOICE"]);
       if (state.pending?.source !== "TURN" || !state.pending.candidate) {
@@ -381,7 +513,7 @@ export function applyCommand(
       }
 
       const lane = boardOf(state, command.boardOwnerPlayerId)[command.lane];
-      if (lane.length >= 3) {
+      if (lane.length >= LANE_CAPACITY) {
         throw new RuleError("LANE_FULL", "The selected lane is full.");
       }
 
@@ -428,12 +560,16 @@ export function getLegalActions(
 ): LegalActions {
   const legal: LegalActions = {
     canUseTazza: false,
+    canUseSwapItem: false,
+    canUseRerollItem: false,
     canHold: false,
     canSurrender:
       state.phase !== "FINISHED" && state.players.includes(viewerPlayerId),
     canChooseTazza: false,
     ownPlacementLanes: [],
     alkkagiLanes: [],
+    swapItemLanes: [],
+    rerollItemTargets: [],
     bonusTargets: [],
   };
 
@@ -449,16 +585,42 @@ export function getLegalActions(
     legal.canHold = true;
     const viewerBoard = boardOf(state, viewerPlayerId);
     legal.ownPlacementLanes = laneIndexes().filter(
-      (lane) => viewerBoard[lane].length < 3,
+      (lane) => viewerBoard[lane].length < LANE_CAPACITY,
     );
 
+    const opponentPlayerId = opponentOf(state.players, viewerPlayerId);
+    const opponentBoard = boardOf(state, opponentPlayerId);
+    if (!state.itemUsedThisTurn) {
+      const inventory = inventoryOf(state, viewerPlayerId);
+      if (inventory.SWAP > 0) {
+        legal.swapItemLanes = laneIndexes().filter(
+          (lane) =>
+            viewerBoard[lane].length > 0 && opponentBoard[lane].length > 0,
+        );
+        legal.canUseSwapItem = legal.swapItemLanes.length > 0;
+      }
+      if (inventory.REROLL > 0) {
+        for (const boardOwnerPlayerId of state.players) {
+          const board = boardOf(state, boardOwnerPlayerId);
+          for (const lane of laneIndexes()) {
+            for (const die of board[lane]) {
+              legal.rerollItemTargets.push({
+                boardOwnerPlayerId,
+                lane,
+                dieId: die.id,
+              });
+            }
+          }
+        }
+        legal.canUseRerollItem = legal.rerollItemTargets.length > 0;
+      }
+    }
+
     if (state.pending.original.kind === "NORMAL") {
-      const opponentPlayerId = opponentOf(state.players, viewerPlayerId);
-      const opponentBoard = boardOf(state, opponentPlayerId);
       const pendingFace = state.pending.original.face;
       legal.alkkagiLanes = laneIndexes().filter(
         (lane) =>
-          viewerBoard[lane].length < 3 &&
+          viewerBoard[lane].length < LANE_CAPACITY &&
           opponentBoard[lane].some(
             (die) =>
               die.kind === "NORMAL" && die.face === pendingFace,
@@ -476,7 +638,7 @@ export function getLegalActions(
     for (const boardOwnerPlayerId of state.players) {
       const board = boardOf(state, boardOwnerPlayerId);
       for (const lane of laneIndexes()) {
-        if (board[lane].length < 3) {
+        if (board[lane].length < LANE_CAPACITY) {
           legal.bonusTargets.push({ boardOwnerPlayerId, lane });
         }
       }
@@ -512,11 +674,26 @@ export function assertGameInvariants(state: GameState): void {
   for (const playerId of state.players) {
     const board = state.boards[playerId];
     invariant(board, `Missing board for ${playerId}.`);
-    if (board.length !== 3) fail(`Invalid board for ${playerId}.`);
+    if (board.length !== LANE_COUNT) fail(`Invalid board for ${playerId}.`);
     for (const lane of board) {
-      if (lane.length > 3) fail("A lane cannot contain more than three dice.");
+      if (lane.length > LANE_CAPACITY) {
+        fail(`A lane cannot contain more than ${LANE_CAPACITY} dice.`);
+      }
       for (const die of lane) visitDie(die);
     }
+
+    const inventory = state.inventory[playerId];
+    invariant(inventory, `Missing inventory for ${playerId}.`);
+    for (const itemType of ["SWAP", "REROLL"] as const) {
+      const count = inventory[itemType];
+      if (!Number.isInteger(count) || count < 0) {
+        fail(`Invalid ${itemType} item count for ${playerId}.`);
+      }
+    }
+  }
+
+  if (typeof state.itemUsedThisTurn !== "boolean") {
+    fail("itemUsedThisTurn must be a boolean.");
   }
 
   if (state.pending?.source === "TURN") {
