@@ -28,6 +28,8 @@ type ItemMode =
   | { type: "REROLL" }
   | null;
 
+const GAME_END_TRANSITION_MS = 2_000;
+
 function normalizeCode(value: string): string {
   return value.toUpperCase().replace(/[\s-]/g, "").slice(0, 6);
 }
@@ -261,6 +263,7 @@ function RulesSheet({ onClose }: { onClose: () => void }) {
       <ol className="rules-list">
         <li><strong>같은 눈을 모으세요.</strong><span>각 라인은 같은 눈이 겹칠수록 보너스가 커집니다. 5+5는 15점, 5+5+5는 25점.</span></li>
         <li><strong>라인을 선택해 놓으세요.</strong><span>내 3개 라인에 각각 최대 5개까지 현재 주사위를 배치합니다.</span></li>
+        <li><strong>15칸을 먼저 채우면 종료.</strong><span>어느 한쪽이 15칸을 채우는 즉시 현재 라인 점수로 승패를 판정합니다.</span></li>
         <li><strong>같은 눈은 알까기.</strong><span>상대 같은 라인의 동일한 일반 주사위를 전부 지우고 보너스 실드를 받습니다.</span></li>
         <li><strong>타짜는 경기당 한 번.</strong><span>현재 눈과 새 눈 중 하나를 고를 수 있습니다.</span></li>
         <li><strong>아이템으로 판을 바꾸세요.</strong><span>같은 라인의 양쪽 주사위를 교환하거나, 놓인 주사위 하나의 눈을 바꿀 수 있습니다. 한 턴에 아이템은 1개만 사용하며 이후에도 착수할 수 있습니다.</span></li>
@@ -283,12 +286,14 @@ function GameScreen({
   pending,
   onCommand,
   onRules,
+  ending = false,
 }: {
   room: RoomSnapshot;
   connection: ConnectionState;
   pending: PendingAction | null;
   onCommand: (command: GameCommand, label: string) => boolean;
   onRules: () => void;
+  ending?: boolean;
 }) {
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [itemMode, setItemMode] = useState<ItemMode>(null);
@@ -315,7 +320,7 @@ function GameScreen({
   const ownTotal = ownScores.reduce((sum, value) => sum + value, 0);
   const opponentTotal = opponentScores.reduce((sum, value) => sum + value, 0);
   const isMyTurn = state.currentPlayerId === selfId;
-  const controlsLocked = connection !== "OPEN" || Boolean(pending);
+  const controlsLocked = ending || connection !== "OPEN" || Boolean(pending);
   const currentDie = pendingDie(state);
   const isBonus = state.phase === "BONUS_PLACEMENT";
   const inventory = state.inventory[selfId] ?? { SWAP: 0, REROLL: 0 };
@@ -356,6 +361,9 @@ function GameScreen({
   } else if (state.phase === "BONUS_PLACEMENT") {
     instruction = "실드를 놓을 보드와 라인을 선택하세요.";
   }
+  if (ending) {
+    instruction = "최종 결과를 집계하고 있습니다.";
+  }
 
   return (
     <main className="game shell shell--game">
@@ -366,13 +374,13 @@ function GameScreen({
         </div>
         <div className="game-header__actions">
           <button className="icon-button" onClick={onRules} aria-label="규칙 보기">?</button>
-          <button className="text-danger" onClick={() => setOverlay("SURRENDER")}>항복</button>
+          {!ending && <button className="text-danger" onClick={() => setOverlay("SURRENDER")}>항복</button>}
         </div>
       </header>
 
       <section className={`score-ribbon ${isMyTurn ? "score-ribbon--mine" : ""}`}>
         <div><span>{self?.nickname ?? "나"}</span><strong>{ownTotal}</strong></div>
-        <p>{isMyTurn ? "내 차례" : "상대 차례"}<small>TURN {String(state.turnNumber).padStart(2, "0")}</small></p>
+        <p>{ending ? "게임 종료" : isMyTurn ? "내 차례" : "상대 차례"}<small>TURN {String(state.turnNumber).padStart(2, "0")}</small></p>
         <div><span>{opponent?.nickname ?? "상대"}</span><strong>{opponentTotal}</strong></div>
       </section>
 
@@ -498,11 +506,11 @@ function GameScreen({
           {isBonus && <span className="bonus-orbit"><ShieldIcon /></span>}
         </div>
         <div className="action-dock__copy">
-          <p className="eyebrow">{itemMode ? "SELECT ITEM TARGET" : isBonus ? "BONUS SHIELD" : isMyTurn ? "CURRENT ROLL" : "OPPONENT ROLL"}</p>
+          <p className="eyebrow">{ending ? "MATCH COMPLETE" : itemMode ? "SELECT ITEM TARGET" : isBonus ? "BONUS SHIELD" : isMyTurn ? "CURRENT ROLL" : "OPPONENT ROLL"}</p>
           <strong>{pending?.label ?? instruction}</strong>
           {isBonus && <small>상대 보드에 놓으면 상대 점수에 포함됩니다.</small>}
         </div>
-        {isMyTurn && state.phase === "TURN_ACTION" && (
+        {!ending && isMyTurn && state.phase === "TURN_ACTION" && (
           <div className={`action-dock__buttons ${itemMode ? "action-dock__buttons--item-mode" : ""}`}>
             {itemMode ? (
               <button
@@ -619,6 +627,16 @@ function GameScreen({
       {(connection === "CONNECTING" || connection === "RECONNECTING") && (
         <div className="reconnect-overlay"><Spinner label="게임에 다시 연결하는 중" /></div>
       )}
+      {ending && (
+        <div className="game-end-overlay" role="status" aria-live="assertive">
+          <section className="game-end-card">
+            <span aria-hidden="true">◆</span>
+            <p className="eyebrow">MATCH COMPLETE</p>
+            <h2>게임 종료</h2>
+            <p>최종 결과를 확인합니다.</p>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
@@ -688,10 +706,64 @@ function ResultScreen({
   );
 }
 
+function PostGameTransition({
+  room,
+  connection,
+  pending,
+  onCommand,
+  onRules,
+  onRematch,
+}: {
+  room: RoomSnapshot;
+  connection: ConnectionState;
+  pending: PendingAction | null;
+  onCommand: (command: GameCommand, label: string) => boolean;
+  onRules: () => void;
+  onRematch: () => void;
+}) {
+  const gameId = room.game?.state.gameId ?? null;
+  const [revealedGameId, setRevealedGameId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!gameId) return;
+    const timeout = window.setTimeout(
+      () => setRevealedGameId(gameId),
+      GAME_END_TRANSITION_MS,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [gameId]);
+
+  if (!gameId || revealedGameId === gameId) {
+    return (
+      <ResultScreen
+        room={room}
+        connection={connection}
+        pending={pending}
+        onRematch={onRematch}
+      />
+    );
+  }
+
+  return (
+    <GameScreen
+      room={room}
+      connection={connection}
+      pending={pending}
+      onCommand={onCommand}
+      onRules={onRules}
+      ending
+    />
+  );
+}
+
 export default function App() {
   const session = useRoomSession();
   const [globalOverlay, setGlobalOverlay] = useState<Overlay>(null);
   const errorKey = useMemo(() => session.error, [session.error]);
+
+  useEffect(() => {
+    if (session.room?.status === "POST_GAME") setGlobalOverlay(null);
+  }, [session.room?.status]);
 
   if (session.restoring) {
     return <main className="boot"><span className="wordmark">ROLL<span>//</span>DUEL</span><Spinner label="이전 게임을 확인하는 중" /></main>;
@@ -718,10 +790,12 @@ export default function App() {
     );
   } else if (session.room.status === "POST_GAME") {
     screen = (
-      <ResultScreen
+      <PostGameTransition
         room={session.room}
         connection={session.connection}
         pending={session.pending}
+        onCommand={session.sendGameCommand}
+        onRules={() => setGlobalOverlay("RULES")}
         onRematch={session.requestRematch}
       />
     );

@@ -1,8 +1,14 @@
 import { RuleError } from "./errors";
-import { LANE_CAPACITY, LANE_COUNT, STARTING_ITEM_COUNT } from "./constants";
+import {
+  BOARD_CAPACITY,
+  LANE_CAPACITY,
+  LANE_COUNT,
+  STARTING_ITEM_COUNT,
+} from "./constants";
 import {
   boardOf,
   calculateResult,
+  countDice,
   createEmptyBoard,
   isEligible,
   laneIndexes,
@@ -136,12 +142,23 @@ function finishNormally(state: GameState, events: GameEvent[]): void {
   events.push({ type: "GAME_FINISHED", result: state.result });
 }
 
+function hasCompletedBoard(state: GameState): boolean {
+  return state.players.some(
+    (playerId) => countDice(boardOf(state, playerId)) >= BOARD_CAPACITY,
+  );
+}
+
 function advanceOrFinish(
   state: GameState,
   actorPlayerId: PlayerId,
   context: EngineContext,
   events: GameEvent[],
 ): void {
+  if (hasCompletedBoard(state)) {
+    finishNormally(state, events);
+    return;
+  }
+
   const opponentPlayerId = opponentOf(state.players, actorPlayerId);
 
   if (isEligible(state, opponentPlayerId)) {
@@ -189,7 +206,7 @@ export function createGame(
   );
   const state: GameState = {
     schemaVersion: 2,
-    rulesVersion: "2",
+    rulesVersion: "3",
     gameId: context.ids.next("game"),
     version: 0,
     players,
@@ -735,6 +752,9 @@ export function assertGameInvariants(state: GameState): void {
     if (state.pending) fail("FINISHED game cannot keep pending dice.");
   } else {
     if (state.result) fail("Active game cannot have a result.");
+    if (hasCompletedBoard(state)) {
+      fail("An active game cannot contain a completed board.");
+    }
     if (!isEligible(state, state.currentPlayerId)) {
       fail("Current player must be eligible while the game is active.");
     }

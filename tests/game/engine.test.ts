@@ -15,6 +15,12 @@ function fullLane(prefix: string, createdBy = "A") {
   );
 }
 
+function oneLane(prefix: string, count = 5, createdBy = "A") {
+  return Array.from({ length: count }, (_, index) =>
+    die(`${prefix}-${index + 1}`, 1, "NORMAL", createdBy),
+  );
+}
+
 describe("game engine", () => {
   it("starts with a server-selected first player and an opening shield", () => {
     const transition = createGame(
@@ -160,41 +166,83 @@ describe("game engine", () => {
     }
   });
 
-  it("lets a previously full player return after alkkagi opens the board", () => {
+  it.each([
+    ["first", "A", "B"],
+    ["second", "B", "A"],
+  ] as const)(
+    "finishes immediately when the %s player completes 15 slots",
+    (_order, completingPlayerId, opponentPlayerId) => {
+      const state = activeState({
+        currentPlayerId: completingPlayerId,
+        pendingFace: 1,
+        boards: {
+          [completingPlayerId]: board(
+            oneLane(`${completingPlayerId}-lane-1`, 5, completingPlayerId),
+            oneLane(`${completingPlayerId}-lane-2`, 5, completingPlayerId),
+            oneLane(`${completingPlayerId}-lane-3`, 4, completingPlayerId),
+          ),
+          [opponentPlayerId]: board(
+            [
+              die(`${opponentPlayerId}-6-1`, 6, "NORMAL", opponentPlayerId),
+              die(`${opponentPlayerId}-6-2`, 6, "NORMAL", opponentPlayerId),
+            ],
+            [
+              die(`${opponentPlayerId}-6-3`, 6, "NORMAL", opponentPlayerId),
+              die(`${opponentPlayerId}-6-4`, 6, "NORMAL", opponentPlayerId),
+            ],
+            [],
+          ),
+        },
+      });
+      const completed = applyCommand(
+        state,
+        completingPlayerId,
+        { type: "PLACE_OWN", lane: 2 },
+        context(),
+      );
+
+      expect(completed.state.phase).toBe("FINISHED");
+      expect(completed.state.pending).toBeNull();
+      expect(completed.state.result).toMatchObject({
+        reason: "NORMAL",
+        winnerPlayerId: opponentPlayerId,
+      });
+      expect(completed.events.map((event) => event.type)).toEqual([
+        "DIE_PLACED",
+        "GAME_FINISHED",
+      ]);
+    },
+  );
+
+  it("also finishes when a bonus shield completes the actor's board", () => {
     const state = activeState({
-      currentPlayerId: "B",
-      pendingFace: 5,
+      pendingFace: 6,
       boards: {
         A: board(
-          fullLane("a-lane-1"),
-          fullLane("a-lane-2"),
-          fullLane("a-lane-3"),
+          oneLane("a-lane-1"),
+          oneLane("a-lane-2"),
+          oneLane("a-lane-3", 4),
         ),
-        B: board([], [], []),
+        B: board([], [], [die("target", 6, "NORMAL", "B")]),
       },
     });
-    expect(isEligible(state, "A")).toBe(false);
-    const engineContext = context({ rolls: [1, 6] });
-
+    const engineContext = context({ rolls: [2] });
     const attacked = applyCommand(
       state,
-      "B",
-      { type: "ALKKAGI", lane: 0 },
+      "A",
+      { type: "ALKKAGI", lane: 2 },
       engineContext,
     );
     const completed = applyCommand(
       attacked.state,
-      "B",
-      { type: "PLACE_BONUS_SHIELD", boardOwnerPlayerId: "B", lane: 0 },
+      "A",
+      { type: "PLACE_BONUS_SHIELD", boardOwnerPlayerId: "A", lane: 2 },
       engineContext,
     );
 
-    expect(completed.state.currentPlayerId).toBe("A");
-    expect(completed.state.phase).toBe("TURN_ACTION");
-    expect(completed.state.pending).toMatchObject({
-      source: "TURN",
-      original: { face: 6, kind: "NORMAL", createdBy: "A" },
-    });
+    expect(completed.state.boards.A?.[2]).toHaveLength(5);
+    expect(completed.state.phase).toBe("FINISHED");
+    expect(completed.events.at(-1)?.type).toBe("GAME_FINISHED");
   });
 
   it("never makes a held player eligible again", () => {

@@ -331,6 +331,11 @@ button.target-row:not(:disabled)::after { content: ""; position: absolute; inset
 .rules-list strong { display: block; margin-bottom: 4px; font-size: .85rem; }
 .rules-list span { display: block; color: rgba(23,26,29,.62); font-size: .76rem; line-height: 1.45; }
 .reconnect-overlay { position: fixed; z-index: 60; inset: 0; display: grid; place-items: center; background: rgba(16,20,25,.76); color: var(--paper); backdrop-filter: blur(5px); }
+.game-end-overlay { position: fixed; z-index: 70; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(16,20,25,.7); backdrop-filter: blur(4px); }
+.game-end-card { display: grid; place-items: center; width: min(100%, 340px); border: 2px solid var(--ink); border-radius: 8px; padding: 30px 24px 27px; background: var(--paper); box-shadow: 8px 8px 0 var(--ink); text-align: center; animation: match-end-in 220ms ease-out; }
+.game-end-card > span { display: grid; place-items: center; width: 46px; height: 46px; margin-bottom: 18px; border: 1.5px solid var(--ink); border-radius: 50%; background: var(--coral); font-size: 1.2rem; }
+.game-end-card h2 { margin: 7px 0 8px; font-size: 1.8rem; letter-spacing: -.05em; }
+.game-end-card > p:last-child { margin: 0; color: rgba(23,26,29,.6); font-size: .78rem; }
 .spinner { display: grid; place-items: center; gap: 12px; text-align: center; }
 .spinner > span { width: 28px; height: 28px; border: 3px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
 .spinner p { margin: 0; font-size: .76rem; font-weight: 700; }
@@ -368,6 +373,7 @@ button.target-row:not(:disabled)::after { content: ""; position: absolute; inset
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 50% { opacity: .25; transform: scale(.78); } }
 @keyframes slide-up { from { transform: translateY(35px); opacity: .4; } }
+@keyframes match-end-in { from { opacity: 0; transform: translateY(12px) scale(.96); } }
 
 @media (min-width: 700px) {
   .shell { padding-left: 32px; padding-right: 32px; }

@@ -1,7 +1,7 @@
 # 방 코드 PVP 아키텍처
 
 - 상태: 현재 구현 기준선
-- 문서 버전: 0.2
+- 문서 버전: 0.3
 - 최종 검토: 2026-07-22
 
 이 문서는 [게임 규칙 명세](./game-rules.md)를 서버 권위의 2인 실시간 웹 게임으로 구현하기 위한 논리 아키텍처와 데이터 계약을 정의한다. 특정 프레임워크를 고르기 전에도 규칙 엔진, 네트워크, 저장소, UI의 책임이 섞이지 않게 하는 것이 목적이다.
@@ -248,7 +248,7 @@ type GameResult = {
 
 type GameState = {
   schemaVersion: 2;
-  rulesVersion: "2";
+  rulesVersion: "3";
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
@@ -293,6 +293,10 @@ START_GAME
        | HOLD -------------------------------+
        | SURRENDER -> FINISHED                |
                                                v
+                                     CHECK_BOARD_COMPLETE
+                                        | 한쪽 15개 -> FINISHED
+                                        | 미완성
+                                        v
                                       ADVANCE_OR_FINISH
                                         | 다음 플레이어 존재
                                         v
@@ -303,7 +307,8 @@ START_GAME
 
 BONUS_PLACEMENT
   -> PLACE_BONUS_SHIELD
-  -> ADVANCE_OR_FINISH
+  -> CHECK_BOARD_COMPLETE
+  -> ADVANCE_OR_FINISH 또는 FINISHED
 ```
 
 ### 다음 플레이어 선택
@@ -314,7 +319,7 @@ function isEligible(state: GameState, playerId: PlayerId): boolean {
 }
 ```
 
-행동 뒤 상대를 먼저 검사하고, 상대가 불가능하면 현재 플레이어를 검사한다. 둘 다 불가능하면 결과를 계산한다. 이 전이는 알까기로 가득 찬 보드가 다시 열리는 경우까지 같은 로직으로 처리한다.
+턴을 끝내는 배치 뒤 어느 한쪽이라도 15개를 채웠는지 먼저 검사한다. 완성된 보드가 있으면 다음 주사위를 굴리지 않고 즉시 결과를 계산한다. 미완성일 때만 상대를 먼저 검사하고, 상대가 불가능하면 현재 플레이어를 검사한다. 둘 다 불가능하면 결과를 계산한다.
 
 ## 9. 순수 규칙 엔진 계약
 
@@ -532,6 +537,7 @@ interface DiceRng {
 - 실드는 제거 이벤트의 대상이 되지 않는다.
 - `FINISHED` 뒤 상태는 게임 명령으로 바뀌지 않는다.
 - 저장된 점수와 보드 재계산 점수가 다를 수 없다.
+- 활성 상태에는 15개를 채운 보드가 남을 수 없고, 15번째 배치 전이는 반드시 `FINISHED`로 끝난다.
 - 같은 상태·명령·스크립트 RNG는 같은 전이 결과를 만든다.
 - 아이템 명령 뒤 pending 턴 주사위와 현재 플레이어는 유지되고, 같은 턴의 두 번째 아이템은 거절된다.
 

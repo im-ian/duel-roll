@@ -93,7 +93,7 @@ export function activeState(options?: {
   const currentPlayerId = options?.currentPlayerId ?? "A";
   return {
     schemaVersion: 2,
-    rulesVersion: "2",
+    rulesVersion: "3",
     gameId: "game_test",
     version: 0,
     players: ["A", "B"],

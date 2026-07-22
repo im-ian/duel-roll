@@ -48,7 +48,7 @@ export type GameResult = {
 
 export type GameState = {
   schemaVersion: 2;
-  rulesVersion: "2";
+  rulesVersion: "3";
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
