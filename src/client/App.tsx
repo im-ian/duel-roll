@@ -12,6 +12,7 @@ import type { RoomSnapshot } from "../protocol";
 import {
   DieView,
   LaneCard,
+  RollingDieView,
   Sheet,
   ShieldIcon,
   Spinner,
@@ -297,6 +298,11 @@ function GameScreen({
 }) {
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [itemMode, setItemMode] = useState<ItemMode>(null);
+  const currentDie = room.game ? pendingDie(room.game.state) : null;
+  const currentRollKey = currentDie && room.game
+    ? `${room.game.state.gameId}:${currentDie.id}`
+    : null;
+  const [revealedRollKey, setRevealedRollKey] = useState<string | null>(null);
   const gameVersion = room.game?.state.version;
 
   useEffect(() => {
@@ -320,8 +326,10 @@ function GameScreen({
   const ownTotal = ownScores.reduce((sum, value) => sum + value, 0);
   const opponentTotal = opponentScores.reduce((sum, value) => sum + value, 0);
   const isMyTurn = state.currentPlayerId === selfId;
-  const controlsLocked = ending || connection !== "OPEN" || Boolean(pending);
-  const currentDie = pendingDie(state);
+  const isRolling = Boolean(
+    !ending && currentRollKey && currentRollKey !== revealedRollKey,
+  );
+  const controlsLocked = ending || isRolling || connection !== "OPEN" || Boolean(pending);
   const isBonus = state.phase === "BONUS_PLACEMENT";
   const inventory = state.inventory[selfId] ?? { SWAP: 0, REROLL: 0 };
   const remainingItems = inventory.SWAP + inventory.REROLL;
@@ -361,6 +369,11 @@ function GameScreen({
   } else if (state.phase === "BONUS_PLACEMENT") {
     instruction = "실드를 놓을 보드와 라인을 선택하세요.";
   }
+  if (isRolling) {
+    instruction = isMyTurn
+      ? "주사위를 굴리는 중입니다."
+      : "상대의 주사위를 굴리는 중입니다.";
+  }
   if (ending) {
     instruction = "최종 결과를 집계하고 있습니다.";
   }
@@ -374,7 +387,7 @@ function GameScreen({
         </div>
         <div className="game-header__actions">
           <button className="icon-button" onClick={onRules} aria-label="규칙 보기">?</button>
-          {!ending && <button className="text-danger" onClick={() => setOverlay("SURRENDER")}>항복</button>}
+          {!ending && <button className="text-danger" disabled={controlsLocked} onClick={() => setOverlay("SURRENDER")}>항복</button>}
         </div>
       </header>
 
@@ -500,13 +513,24 @@ function GameScreen({
         </ol>
       </details>
 
-      <footer className={`action-dock ${isBonus ? "action-dock--bonus" : ""}`}>
+      <footer className={`action-dock ${isBonus ? "action-dock--bonus" : ""} ${isRolling ? "action-dock--rolling" : ""}`}>
         <div className="action-dock__die">
-          {currentDie ? <DieView die={currentDie} large /> : <span className="die-placeholder">—</span>}
+          {currentDie && currentRollKey && isRolling ? (
+            <RollingDieView
+              key={currentRollKey}
+              die={currentDie}
+              onComplete={() => setRevealedRollKey(currentRollKey)}
+            />
+          ) : currentDie ? (
+            <DieView die={currentDie} large />
+          ) : (
+            <span className="die-placeholder">—</span>
+          )}
+          {isRolling && <span className="roll-status" aria-hidden="true">ROLL</span>}
           {isBonus && <span className="bonus-orbit"><ShieldIcon /></span>}
         </div>
         <div className="action-dock__copy">
-          <p className="eyebrow">{ending ? "MATCH COMPLETE" : itemMode ? "SELECT ITEM TARGET" : isBonus ? "BONUS SHIELD" : isMyTurn ? "CURRENT ROLL" : "OPPONENT ROLL"}</p>
+          <p className="eyebrow">{ending ? "MATCH COMPLETE" : isRolling ? "ROLLING..." : itemMode ? "SELECT ITEM TARGET" : isBonus ? "BONUS SHIELD" : isMyTurn ? "CURRENT ROLL" : "OPPONENT ROLL"}</p>
           <strong>{pending?.label ?? instruction}</strong>
           {isBonus && <small>상대 보드에 놓으면 상대 점수에 포함됩니다.</small>}
         </div>

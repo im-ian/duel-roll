@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { LANE_CAPACITY } from "../game/constants";
 import type { Die, LaneIndex } from "../game";
@@ -10,6 +11,14 @@ const PIPS: Record<Die["face"], number[]> = {
   5: [0, 2, 4, 6, 8],
   6: [0, 2, 3, 5, 6, 8],
 };
+
+const DIE_ROLL_DURATION_MS = 720;
+const DIE_ROLL_FRAME_MS = 72;
+const ROLLING_FACES: Die["face"][] = [2, 5, 1, 6, 3, 4];
+
+function rollingFace(finalFace: Die["face"], frame: number): Die["face"] {
+  return ROLLING_FACES[(finalFace + frame * 5) % ROLLING_FACES.length] ?? finalFace;
+}
 
 export function ShieldIcon() {
   return (
@@ -24,17 +33,19 @@ export function DieView({
   die,
   large = false,
   muted = false,
+  ariaLabel,
 }: {
   die: Die;
   large?: boolean;
   muted?: boolean;
+  ariaLabel?: string;
 }) {
   return (
     <div
       className={`die ${large ? "die--large" : ""} ${
         die.kind === "SHIELD" ? "die--shield" : ""
       } ${muted ? "die--muted" : ""}`}
-      aria-label={`${die.face} 눈${die.kind === "SHIELD" ? " 실드" : ""}`}
+      aria-label={ariaLabel ?? `${die.face} 눈${die.kind === "SHIELD" ? " 실드" : ""}`}
     >
       <span className="die__grid" aria-hidden="true">
         {Array.from({ length: 9 }, (_, index) => (
@@ -46,6 +57,62 @@ export function DieView({
           <ShieldIcon />
         </span>
       )}
+    </div>
+  );
+}
+
+export function RollingDieView({
+  die,
+  onComplete,
+}: {
+  die: Die;
+  onComplete: () => void;
+}) {
+  const completionRef = useRef(onComplete);
+  const [visibleFace, setVisibleFace] = useState<Die["face"]>(() =>
+    rollingFace(die.face, 0),
+  );
+  const [rolling, setRolling] = useState(true);
+
+  useEffect(() => {
+    completionRef.current = onComplete;
+  }, [onComplete]);
+
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setVisibleFace(die.face);
+      setRolling(false);
+      completionRef.current();
+      return;
+    }
+
+    let frame = 0;
+    setRolling(true);
+    setVisibleFace(rollingFace(die.face, frame));
+    const frameTimer = window.setInterval(() => {
+      frame += 1;
+      setVisibleFace(rollingFace(die.face, frame));
+    }, DIE_ROLL_FRAME_MS);
+    const finishTimer = window.setTimeout(() => {
+      window.clearInterval(frameTimer);
+      setVisibleFace(die.face);
+      setRolling(false);
+      completionRef.current();
+    }, DIE_ROLL_DURATION_MS);
+
+    return () => {
+      window.clearInterval(frameTimer);
+      window.clearTimeout(finishTimer);
+    };
+  }, [die.face, die.id]);
+
+  return (
+    <div className={`rolling-die ${rolling ? "rolling-die--active" : ""}`} data-rolling={rolling}>
+      <DieView
+        die={{ ...die, face: visibleFace }}
+        large
+        ariaLabel={rolling ? "주사위 굴리는 중" : undefined}
+      />
     </div>
   );
 }

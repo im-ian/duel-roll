@@ -265,6 +265,9 @@ button.target-row:not(:disabled)::after { content: ""; position: absolute; inset
 .die--large .die__grid i.on::after { width: 8px; height: 8px; }
 .die--large .die__shield { right: -8px; bottom: -8px; width: 25px; height: 25px; }
 .die--large .shield-icon { width: 16px; }
+.rolling-die { display: grid; place-items: center; transform-origin: 50% 65%; will-change: transform; }
+.rolling-die--active { animation: die-roll 720ms cubic-bezier(.2,.72,.24,1) both; }
+.rolling-die--active .die { animation: die-roll-shadow 720ms ease-out both; }
 
 .event-log { margin: 10px 2px 0; border-top: 1px solid var(--line); color: rgba(23,26,29,.62); font-size: .68rem; }
 .event-log summary { padding: 11px 2px; cursor: pointer; font-weight: 700; }
@@ -288,8 +291,10 @@ button.target-row:not(:disabled)::after { content: ""; position: absolute; inset
   backdrop-filter: blur(10px);
 }
 .action-dock--bonus { background: rgba(215,248,246,.97); }
+.action-dock--rolling { background: linear-gradient(110deg, rgba(217,255,67,.2), rgba(243,239,230,.98) 48%, rgba(85,220,226,.18)); }
 .action-dock__die { position: relative; display: grid; place-items: center; align-self: start; min-width: 76px; min-height: 76px; }
 .die-placeholder { font: 900 2rem ui-monospace, monospace; }
+.roll-status { position: absolute; right: -3px; bottom: -4px; z-index: 2; border: 1px solid var(--ink); border-radius: 99px; padding: 3px 6px; background: var(--acid); box-shadow: 2px 2px 0 var(--ink); font: 900 .52rem ui-monospace, monospace; letter-spacing: .08em; }
 .bonus-orbit { position: absolute; top: -4px; left: -1px; display: grid; place-items: center; width: 23px; height: 23px; border-radius: 50%; background: var(--cyan); color: var(--ink); }
 .bonus-orbit .shield-icon { width: 14px; }
 .action-dock__copy { align-self: center; min-width: 0; }
@@ -374,6 +379,20 @@ button.target-row:not(:disabled)::after { content: ""; position: absolute; inset
 @keyframes pulse { 50% { opacity: .25; transform: scale(.78); } }
 @keyframes slide-up { from { transform: translateY(35px); opacity: .4; } }
 @keyframes match-end-in { from { opacity: 0; transform: translateY(12px) scale(.96); } }
+@keyframes die-roll {
+  0% { transform: translateY(7px) rotate(-12deg) scale(.88); }
+  22% { transform: translateY(-19px) rotate(82deg) scale(1.05); }
+  48% { transform: translateY(2px) rotate(174deg) scale(.97); }
+  66% { transform: translateY(-9px) rotate(252deg) scale(1.02); }
+  84% { transform: translateY(1px) rotate(326deg) scale(.99); }
+  100% { transform: translateY(0) rotate(360deg) scale(1); }
+}
+@keyframes die-roll-shadow {
+  0%, 100% { box-shadow: 4px 4px 0 var(--ink); }
+  22% { box-shadow: 10px 15px 0 rgba(23,26,29,.2); }
+  48% { box-shadow: 3px 3px 0 var(--ink); }
+  66% { box-shadow: 7px 10px 0 rgba(23,26,29,.25); }
+}
 
 @media (min-width: 700px) {
   .shell { padding-left: 32px; padding-right: 32px; }
