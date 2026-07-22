@@ -268,7 +268,7 @@ function RulesSheet({ onClose }: { onClose: () => void }) {
         <li><strong>15칸을 먼저 채우면 종료.</strong><span>어느 한쪽이 15칸을 채우는 즉시 현재 라인 점수로 승패를 판정합니다.</span></li>
         <li><strong>같은 눈은 알까기.</strong><span>상대 같은 라인의 동일한 일반 주사위를 전부 지우고 보너스 실드를 받습니다.</span></li>
         <li><strong>타짜는 경기당 한 번.</strong><span>현재 눈과 새 눈 중 하나를 고를 수 있습니다.</span></li>
-        <li><strong>아이템으로 판을 바꾸세요.</strong><span>라인 교환, 일반 주사위 눈 변환, 현재 주사위 실드 강화를 경기당 한 번씩 쓸 수 있습니다. 실드는 아이템과 맵 효과를 받지 않습니다.</span></li>
+        <li><strong>아이템으로 판을 바꾸세요.</strong><span>주사위 교환, 일반 주사위 눈 변환, 현재 주사위 실드 강화를 경기당 한 번씩 쓸 수 있습니다. 실드는 아이템과 맵 효과를 받지 않습니다.</span></li>
         <li><strong>2개 라인을 이기면 승리.</strong><span>라인 승수가 같으면 전체 점수로 판정합니다.</span></li>
       </ol>
       <button className="button button--primary" onClick={onClose}>알겠어요</button>
@@ -597,8 +597,8 @@ function GameScreen({
           >
             <span className="item-card__icon" aria-hidden="true">⇄</span>
             <span className="item-card__copy">
-              <strong>라인 교환</strong>
-              <small>내 일반 주사위와 같은 라인의 상대 일반 주사위를 통째로 교환합니다.</small>
+              <strong>주사위 교환</strong>
+              <small>같은 라인에서 내 일반 주사위 1개와 상대 일반 주사위 1개를 1:1로 교환합니다.</small>
               <em>{swapItemStatus}</em>
             </span>
             <span className="item-card__count">×{inventory.SWAP}</span>
