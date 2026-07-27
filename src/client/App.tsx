@@ -22,7 +22,7 @@ import {
 import { useRoomSession } from "./use-room-session";
 import type { ConnectionState, PendingAction } from "./use-room-session";
 
-type Overlay = "RULES" | "HOLD" | "SURRENDER" | "INVENTORY" | null;
+type Overlay = "TUTORIAL" | "HOLD" | "SURRENDER" | "INVENTORY" | null;
 type ItemMode =
   | {
       type: "SWAP";
@@ -53,12 +53,12 @@ function HomeScreen({
   requesting,
   onCreate,
   onJoin,
-  onRules,
+  onTutorial,
 }: {
   requesting: boolean;
   onCreate: (nickname: string) => void;
   onJoin: (code: string, nickname: string) => void;
-  onRules: () => void;
+  onTutorial: () => void;
 }) {
   const [mode, setMode] = useState<"HOME" | "CREATE" | "JOIN">("HOME");
   const [nickname, setNickname] = useState("");
@@ -91,7 +91,7 @@ function HomeScreen({
           <button className="button button--outline" onClick={() => setMode("JOIN")}>
             방 코드로 참가
           </button>
-          <button className="text-button" onClick={onRules}>90초 규칙 보기</button>
+          <button className="text-button" onClick={onTutorial}>게임 튜토리얼</button>
         </div>
       ) : (
         <form className="entry-card" onSubmit={submit}>
@@ -277,19 +277,170 @@ function eventText(event: GameEvent, selfPlayerId: PlayerId): string {
   }
 }
 
-function RulesSheet({ onClose }: { onClose: () => void }) {
+const TUTORIAL_STEPS = [
+  {
+    eyebrow: "01 · OBJECTIVE",
+    title: "세 라인 중 더 많이 이기세요",
+    body: "각 라인의 점수를 상대와 비교합니다. 라인 승수가 같으면 세 라인의 총점이 높은 쪽이 승리합니다.",
+  },
+  {
+    eyebrow: "02 · PLACE",
+    title: "굴린 주사위를 한 라인에 놓으세요",
+    body: "턴마다 내 세 라인 중 빈 곳을 고릅니다. 한 라인은 최대 5개이며, 어느 한쪽이 총 15칸을 채우는 즉시 점수를 판정합니다.",
+  },
+  {
+    eyebrow: "03 · SCORE",
+    title: "같은 눈을 모을수록 강해집니다",
+    body: "같은 라인에서 같은 눈 두 개는 눈의 3배, 세 개는 5배가 됩니다. 높은 눈 하나보다 같은 눈 조합이 더 강할 수 있습니다.",
+  },
+  {
+    eyebrow: "04 · ATTACK",
+    title: "같은 눈으로 상대 라인을 깨세요",
+    body: "현재 눈과 같은 상대의 일반 주사위를 같은 라인에서 모두 제거할 수 있습니다. 공격 뒤 받은 실드는 어느 쪽 빈 라인에도 놓을 수 있습니다.",
+  },
+  {
+    eyebrow: "05 · TACTICS",
+    title: "특수 행동으로 흐름을 바꾸세요",
+    body: "타짜는 경기당 한 번, 아이템은 내 턴마다 한 개까지 사용할 수 있습니다. 아이템을 쓴 뒤에도 현재 주사위를 놓거나 공격할 수 있습니다.",
+  },
+] as const;
+
+function tutorialDie(face: Die["face"], id: string, kind: Die["kind"] = "NORMAL"): Die {
+  return { id: `tutorial-${id}`, face, kind, createdBy: "tutorial" };
+}
+
+function TutorialVisual({ step }: { step: number }) {
+  if (step === 0) {
+    return (
+      <div className="tutorial-visual tutorial-scoreboard" aria-label="세 라인 중 두 라인을 이기는 예시">
+        {([
+          [14, 9],
+          [11, 16],
+          [18, 12],
+        ] as const).map(([mine, opponent], lane) => (
+          <div className={mine > opponent ? "tutorial-scoreboard__won" : ""} key={lane}>
+            <span>LINE 0{lane + 1}</span>
+            <strong>{mine}</strong>
+            <small>VS</small>
+            <strong>{opponent}</strong>
+            <em>{mine > opponent ? "승리" : "패배"}</em>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (step === 1) {
+    return (
+      <div className="tutorial-visual tutorial-placement" aria-label="현재 주사위를 세 라인 중 하나에 놓는 예시">
+        <div className="tutorial-placement__current">
+          <span>현재 주사위</span>
+          <DieView die={tutorialDie(4, "current")} />
+        </div>
+        <span className="tutorial-placement__arrow" aria-hidden="true">→</span>
+        <div className="tutorial-placement__lanes">
+          {[0, 1, 2].map((lane) => (
+            <div key={lane} className={lane === 1 ? "is-selected" : ""}>
+              <span>LINE 0{lane + 1}</span>
+              {Array.from({ length: 5 }, (_, slot) => (
+                <i key={slot} className={slot < lane + 1 ? "is-filled" : ""} />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 2) {
+    return (
+      <div className="tutorial-visual tutorial-combo" aria-label="5 눈을 모아 점수가 증가하는 예시">
+        <div>
+          <span><DieView die={tutorialDie(5, "pair-a")} /><DieView die={tutorialDie(5, "pair-b")} /></span>
+          <strong>15점</strong>
+          <small>5 × 3</small>
+        </div>
+        <span aria-hidden="true">→</span>
+        <div className="tutorial-combo__best">
+          <span><DieView die={tutorialDie(5, "triple-a")} /><DieView die={tutorialDie(5, "triple-b")} /><DieView die={tutorialDie(5, "triple-c")} /></span>
+          <strong>25점</strong>
+          <small>5 × 5</small>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 3) {
+    return (
+      <div className="tutorial-visual tutorial-attack" aria-label="같은 눈의 일반 주사위만 제거하고 실드는 남는 예시">
+        <div>
+          <span>내 공격</span>
+          <DieView die={tutorialDie(4, "attack")} />
+        </div>
+        <span className="tutorial-attack__impact" aria-hidden="true">×</span>
+        <div>
+          <span>상대 라인</span>
+          <span className="tutorial-attack__targets">
+            <i><DieView die={tutorialDie(4, "target")} /><b>제거</b></i>
+            <i><DieView die={tutorialDie(4, "shield", "SHIELD")} /><b>보호</b></i>
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <Sheet title="90초 규칙" onClose={onClose}>
-      <ol className="rules-list">
-        <li><strong>같은 눈을 모으세요.</strong><span>각 라인은 같은 눈이 겹칠수록 보너스가 커집니다. 5+5는 15점, 5+5+5는 25점.</span></li>
-        <li><strong>라인을 선택해 놓으세요.</strong><span>내 3개 라인에 각각 최대 5개까지 현재 주사위를 배치합니다.</span></li>
-        <li><strong>15칸을 먼저 채우면 종료.</strong><span>어느 한쪽이 15칸을 채우는 즉시 현재 라인 점수로 승패를 판정합니다.</span></li>
-        <li><strong>같은 눈은 알까기.</strong><span>상대 같은 라인의 동일한 일반 주사위를 전부 지우고 보너스 실드를 받습니다.</span></li>
-        <li><strong>타짜는 경기당 한 번.</strong><span>현재 눈과 새 눈 중 하나를 고를 수 있습니다.</span></li>
-        <li><strong>아이템으로 판을 바꾸세요.</strong><span>교환·눈 변환·실드 강화·무작위 투하·파괴·리롤·홀수·짝수 아이템이 있습니다. 보유한 아이템만 사용할 수 있고, 실드는 아이템과 맵 효과를 받지 않습니다.</span></li>
-        <li><strong>2개 라인을 이기면 승리.</strong><span>라인 승수가 같으면 전체 점수로 판정합니다.</span></li>
-      </ol>
-      <button className="button button--primary" onClick={onClose}>알겠어요</button>
+    <div className="tutorial-visual tutorial-tools" aria-label="타짜와 아이템 사용 규칙">
+      <div><span>✦</span><strong>타짜</strong><small>경기당 1회</small></div>
+      <div><span>◆</span><strong>아이템</strong><small>턴마다 1개</small></div>
+      <div><span>→</span><strong>착수</strong><small>사용 후 계속</small></div>
+    </div>
+  );
+}
+
+function TutorialSheet({ onClose }: { onClose: () => void }) {
+  const [step, setStep] = useState(0);
+  const current = TUTORIAL_STEPS[step] ?? TUTORIAL_STEPS[0];
+  const isLast = step === TUTORIAL_STEPS.length - 1;
+
+  return (
+    <Sheet title="게임 튜토리얼" description="다섯 장으로 핵심 규칙을 익혀보세요." onClose={onClose}>
+      <section className="tutorial-step" aria-live="polite">
+        <TutorialVisual step={step} />
+        <div className="tutorial-step__copy">
+          <p className="eyebrow">{current.eyebrow}</p>
+          <h3>{current.title}</h3>
+          <p>{current.body}</p>
+        </div>
+      </section>
+      <nav className="tutorial-progress" aria-label="튜토리얼 단계">
+        {TUTORIAL_STEPS.map((tutorialStep, index) => (
+          <button
+            key={tutorialStep.eyebrow}
+            type="button"
+            className={index === step ? "is-current" : ""}
+            onClick={() => setStep(index)}
+            aria-label={`${index + 1}단계: ${tutorialStep.title}`}
+            aria-current={index === step ? "step" : undefined}
+          />
+        ))}
+      </nav>
+      <div className="tutorial-actions">
+        <button
+          type="button"
+          className="button button--outline"
+          onClick={() => step === 0 ? onClose() : setStep((currentStep) => currentStep - 1)}
+        >
+          {step === 0 ? "닫기" : "이전"}
+        </button>
+        <button
+          type="button"
+          className="button button--primary"
+          onClick={() => isLast ? onClose() : setStep((currentStep) => currentStep + 1)}
+        >
+          {isLast ? "게임으로 돌아가기" : "다음"}
+        </button>
+      </div>
     </Sheet>
   );
 }
@@ -305,14 +456,14 @@ function GameScreen({
   connection,
   pending,
   onCommand,
-  onRules,
+  onTutorial,
   ending = false,
 }: {
   room: RoomSnapshot;
   connection: ConnectionState;
   pending: PendingAction | null;
   onCommand: (command: GameCommand, label: string) => boolean;
-  onRules: () => void;
+  onTutorial: () => void;
   ending?: boolean;
 }) {
   const [overlay, setOverlay] = useState<Overlay>(null);
@@ -460,7 +611,7 @@ function GameScreen({
           <h1>{opponent?.nickname ?? "상대"} <span className={`presence-dot ${opponent?.connected ? "on" : ""}`} /></h1>
         </div>
         <div className="game-header__actions">
-          <button className="icon-button" onClick={onRules} aria-label="규칙 보기">?</button>
+          <button className="icon-button" onClick={onTutorial} aria-label="게임 튜토리얼 열기">?</button>
           {!ending && <button className="text-danger" disabled={controlsLocked} onClick={() => setOverlay("SURRENDER")}>항복</button>}
         </div>
       </header>
@@ -935,14 +1086,14 @@ function PostGameTransition({
   connection,
   pending,
   onCommand,
-  onRules,
+  onTutorial,
   onRematch,
 }: {
   room: RoomSnapshot;
   connection: ConnectionState;
   pending: PendingAction | null;
   onCommand: (command: GameCommand, label: string) => boolean;
-  onRules: () => void;
+  onTutorial: () => void;
   onRematch: () => void;
 }) {
   const gameId = room.game?.state.gameId ?? null;
@@ -974,7 +1125,7 @@ function PostGameTransition({
       connection={connection}
       pending={pending}
       onCommand={onCommand}
-      onRules={onRules}
+      onTutorial={onTutorial}
       ending
     />
   );
@@ -1000,7 +1151,7 @@ export default function App() {
         requesting={session.requesting}
         onCreate={session.createRoom}
         onJoin={session.joinRoom}
-        onRules={() => setGlobalOverlay("RULES")}
+        onTutorial={() => setGlobalOverlay("TUTORIAL")}
       />
     );
   } else if (session.room.status === "WAITING_FOR_OPPONENT" || session.room.status === "LOBBY") {
@@ -1019,7 +1170,7 @@ export default function App() {
         connection={session.connection}
         pending={session.pending}
         onCommand={session.sendGameCommand}
-        onRules={() => setGlobalOverlay("RULES")}
+        onTutorial={() => setGlobalOverlay("TUTORIAL")}
         onRematch={session.requestRematch}
       />
     );
@@ -1030,7 +1181,7 @@ export default function App() {
         connection={session.connection}
         pending={session.pending}
         onCommand={session.sendGameCommand}
-        onRules={() => setGlobalOverlay("RULES")}
+        onTutorial={() => setGlobalOverlay("TUTORIAL")}
       />
     );
   }
@@ -1043,7 +1194,7 @@ export default function App() {
           <span>!</span>{errorKey}<b>×</b>
         </button>
       )}
-      {globalOverlay === "RULES" && <RulesSheet onClose={() => setGlobalOverlay(null)} />}
+      {globalOverlay === "TUTORIAL" && <TutorialSheet onClose={() => setGlobalOverlay(null)} />}
     </>
   );
 }

@@ -345,10 +345,64 @@ button.target-row:not(:disabled)::after { content: ""; position: absolute; inset
 .item-card:disabled .item-card__copy em { color: rgba(23,26,29,.52); }
 .item-card__count { border-radius: 99px; padding: 5px 8px; background: var(--ink); color: var(--paper); font: 800 .67rem ui-monospace, monospace; }
 .inventory-status { margin: 2px 0 0; border: 1px solid rgba(181,68,55,.3); padding: 9px 11px; background: rgba(255,118,95,.12); color: #9d382d; font-size: .72rem; text-align: center; }
-.rules-list { display: grid; gap: 17px; margin: 0; padding-left: 24px; }
-.rules-list li { padding-left: 5px; }
-.rules-list strong { display: block; margin-bottom: 4px; font-size: .85rem; }
-.rules-list span { display: block; color: rgba(23,26,29,.62); font-size: .76rem; line-height: 1.45; }
+.tutorial-step { display: grid; gap: 19px; }
+.tutorial-visual {
+  min-height: 190px;
+  border: 1.5px solid var(--ink);
+  border-radius: 6px;
+  padding: 18px;
+  background: rgba(255,255,255,.38);
+  box-shadow: 5px 5px 0 var(--ink);
+}
+.tutorial-step__copy h3 { margin: 7px 0 8px; font-size: 1.22rem; letter-spacing: -.035em; }
+.tutorial-step__copy > p:last-child { margin: 0; color: rgba(23,26,29,.66); font-size: .81rem; line-height: 1.55; }
+.tutorial-scoreboard { display: grid; align-content: center; gap: 7px; background: rgba(158,128,255,.12); }
+.tutorial-scoreboard > div { display: grid; grid-template-columns: 1fr 30px 20px 30px 42px; align-items: center; gap: 5px; border: 1px solid var(--line); padding: 9px 10px; background: rgba(255,255,255,.55); }
+.tutorial-scoreboard > div > span { font: 750 .62rem ui-monospace, monospace; }
+.tutorial-scoreboard > div > strong { font: 900 .92rem ui-monospace, monospace; text-align: center; }
+.tutorial-scoreboard > div > small { color: rgba(23,26,29,.42); font: 700 .52rem ui-monospace, monospace; text-align: center; }
+.tutorial-scoreboard > div > em { border-radius: 99px; padding: 3px 5px; background: var(--paper-2); color: rgba(23,26,29,.58); font-size: .58rem; font-style: normal; font-weight: 800; text-align: center; }
+.tutorial-scoreboard > .tutorial-scoreboard__won { border-color: var(--ink); background: rgba(217,255,67,.34); }
+.tutorial-scoreboard > .tutorial-scoreboard__won > em { background: var(--acid); color: var(--ink); }
+.tutorial-placement { display: grid; grid-template-columns: auto 20px 1fr; align-items: center; gap: 12px; background: rgba(85,220,226,.13); }
+.tutorial-placement__current { display: grid; place-items: center; gap: 9px; }
+.tutorial-placement__current > span, .tutorial-attack > div > span:first-child { font-size: .59rem; font-weight: 800; }
+.tutorial-placement__arrow { font-size: 1.3rem; font-weight: 900; }
+.tutorial-placement__lanes { display: grid; gap: 7px; }
+.tutorial-placement__lanes > div { display: grid; grid-template-columns: 52px repeat(5, 1fr); align-items: center; gap: 4px; border: 1px solid var(--line); padding: 7px; background: rgba(255,255,255,.55); }
+.tutorial-placement__lanes > div.is-selected { border: 2px solid var(--ink); padding: 6px; background: rgba(217,255,67,.36); box-shadow: 3px 3px 0 var(--ink); }
+.tutorial-placement__lanes span { font: 700 .53rem ui-monospace, monospace; }
+.tutorial-placement__lanes i { width: 100%; aspect-ratio: 1; border: 1px dashed rgba(23,26,29,.24); border-radius: 3px; }
+.tutorial-placement__lanes i.is-filled { border-style: solid; background: var(--violet); }
+.tutorial-combo { display: grid; grid-template-columns: 1fr auto 1.2fr; align-items: center; gap: 9px; background: rgba(217,255,67,.14); }
+.tutorial-combo > div { display: grid; justify-items: center; gap: 9px; border: 1px solid var(--line); padding: 15px 8px; background: rgba(255,255,255,.55); }
+.tutorial-combo > div > span { display: flex; gap: 4px; }
+.tutorial-combo .die { width: 28px; height: 28px; border-radius: 5px; }
+.tutorial-combo > div > strong { font: 900 1.1rem ui-monospace, monospace; }
+.tutorial-combo > div > small { color: rgba(23,26,29,.52); font: 700 .62rem ui-monospace, monospace; }
+.tutorial-combo > .tutorial-combo__best { border: 1.5px solid var(--ink); background: rgba(217,255,67,.4); box-shadow: 3px 3px 0 var(--ink); }
+.tutorial-attack { display: grid; grid-template-columns: 1fr auto 1.6fr; align-items: center; gap: 12px; background: rgba(255,118,95,.12); }
+.tutorial-attack > div { display: grid; place-items: center; gap: 10px; }
+.tutorial-attack__impact { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--coral); font-weight: 900; }
+.tutorial-attack__targets { display: flex; gap: 14px; }
+.tutorial-attack__targets i { position: relative; display: grid; justify-items: center; gap: 6px; font-style: normal; }
+.tutorial-attack__targets b { border-radius: 99px; padding: 3px 6px; background: var(--coral); font-size: .55rem; }
+.tutorial-attack__targets i:last-child b { background: var(--violet); color: white; }
+.tutorial-attack__targets i:first-child::after { content: ""; position: absolute; top: 16px; width: 44px; height: 2px; background: #b54437; transform: rotate(-35deg); }
+.tutorial-tools { display: grid; grid-template-columns: repeat(3, 1fr); align-items: center; gap: 8px; background: rgba(158,128,255,.11); }
+.tutorial-tools > div { position: relative; display: grid; place-items: center; gap: 7px; min-width: 0; border: 1px solid var(--line); padding: 15px 5px; background: rgba(255,255,255,.5); text-align: center; }
+.tutorial-tools > div + div::before { content: "+"; position: absolute; left: -12px; display: grid; place-items: center; width: 16px; height: 16px; border: 1px solid var(--ink); border-radius: 50%; background: var(--paper); font-size: .66rem; font-weight: 900; }
+.tutorial-tools > div:last-child::before { content: "="; }
+.tutorial-tools > div > span { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--ink); border-radius: 50%; background: var(--violet); color: white; font-weight: 900; }
+.tutorial-tools > div:nth-child(2) > span { background: var(--cyan); color: var(--ink); }
+.tutorial-tools > div:last-child > span { background: var(--acid); color: var(--ink); }
+.tutorial-tools strong { font-size: .73rem; }
+.tutorial-tools small { color: rgba(23,26,29,.55); font-size: .56rem; line-height: 1.25; }
+.tutorial-progress { display: flex; justify-content: center; gap: 8px; padding: 2px 0; }
+.tutorial-progress button { width: 9px; height: 9px; border: 1px solid var(--ink); border-radius: 50%; padding: 0; background: transparent; cursor: pointer; }
+.tutorial-progress button.is-current { width: 25px; border-radius: 99px; background: var(--ink); }
+.tutorial-actions { display: grid; grid-template-columns: .8fr 1.2fr; gap: 9px; }
+.tutorial-actions .button { min-height: 48px; padding-inline: 12px; font-size: .78rem; }
 .reconnect-overlay { position: fixed; z-index: 60; inset: 0; display: grid; place-items: center; background: rgba(16,20,25,.76); color: var(--paper); backdrop-filter: blur(5px); }
 .game-end-overlay { position: fixed; z-index: 70; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(16,20,25,.7); backdrop-filter: blur(4px); }
 .game-end-card { display: grid; place-items: center; width: min(100%, 340px); border: 2px solid var(--ink); border-radius: 8px; padding: 30px 24px 27px; background: var(--paper); box-shadow: 8px 8px 0 var(--ink); text-align: center; animation: match-end-in 220ms ease-out; }
