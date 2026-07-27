@@ -309,7 +309,7 @@ const TUTORIAL_STEPS = [
   {
     eyebrow: "02 · PLACE",
     title: "굴린 주사위를 한 라인에 놓으세요",
-    body: "턴마다 내 세 라인 중 빈 곳을 고릅니다. 한 라인은 최대 5개이며, 어느 한쪽이 총 15칸을 채우는 즉시 점수를 판정합니다.",
+    body: "턴마다 내 세 라인 중 빈 곳을 고릅니다. 한 라인은 최대 5개입니다. 어느 보드든 총 15칸이 되면 같은 라운드의 후공 턴까지 마친 뒤 점수를 판정합니다.",
   },
   {
     eyebrow: "03 · SCORE",
@@ -560,6 +560,20 @@ function GameScreen({
   const ownTotal = ownScores.reduce((sum, value) => sum + value, 0);
   const opponentTotal = opponentScores.reduce((sum, value) => sum + value, 0);
   const isMyTurn = state.currentPlayerId === selfId;
+  const finalTurnPlayerId = state.finalTurnPlayerId;
+  const finalTurnOwner = finalTurnPlayerId === selfId ? "나" : "상대";
+  const finalTurnPlayerHeld = finalTurnPlayerId !== null &&
+    state.held[finalTurnPlayerId] === true;
+  const finalTurnTitle = finalTurnPlayerHeld
+    ? "현재 턴 뒤 종료"
+    : "후공 마지막 턴";
+  const finalTurnMessage = finalTurnPlayerId === null
+    ? null
+    : finalTurnPlayerHeld
+      ? `${finalTurnOwner}가 이미 홀드해 현재 턴이 끝나면 결과를 판정합니다.`
+      : state.currentPlayerId === finalTurnPlayerId
+        ? `${finalTurnOwner}의 마지막 턴이 끝나면 결과를 판정합니다.`
+        : `현재 턴이 끝나면 ${finalTurnOwner}의 마지막 턴이 이어집니다.`;
   const isRolling = Boolean(
     !ending && currentRollKey && currentRollKey !== revealedRollKey,
   );
@@ -721,6 +735,14 @@ function GameScreen({
         <p>{ending ? "게임 종료" : isMyTurn ? "내 차례" : "상대 차례"}<small>TURN {String(state.turnNumber).padStart(2, "0")}</small></p>
         <div><span>{opponent?.nickname ?? "상대"}</span><strong>{opponentTotal}</strong></div>
       </section>
+
+      {finalTurnMessage && !ending && (
+        <section className="final-turn-notice" role="status">
+          <span>FINAL</span>
+          <strong>{finalTurnTitle}</strong>
+          <small>{finalTurnMessage}</small>
+        </section>
+      )}
 
       <section className={`line-reward ${allLineMissionRewardsClaimed ? "line-reward--claimed" : ""}`}>
         <span className="line-reward__lane" aria-hidden="true">

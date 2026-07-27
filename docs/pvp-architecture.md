@@ -1,7 +1,7 @@
 # 방 코드 PVP 아키텍처
 
 - 상태: 현재 구현 기준선
-- 문서 버전: 0.8
+- 문서 버전: 0.9
 - 최종 검토: 2026-07-27
 
 이 문서는 [게임 규칙 명세](./game-rules.md)를 서버 권위의 2인 실시간 웹 게임으로 구현하기 위한 논리 아키텍처와 데이터 계약을 정의한다. 특정 프레임워크를 고르기 전에도 규칙 엔진, 네트워크, 저장소, UI의 책임이 섞이지 않게 하는 것이 목적이다.
@@ -273,7 +273,7 @@ type GameResult = {
 };
 
 type GameState = {
-  schemaVersion: 7;
+  schemaVersion: 8;
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
@@ -287,6 +287,7 @@ type GameState = {
   inventory: Record<PlayerId, ItemInventory>;
   itemUsedThisTurn: boolean;
   lineMission: LineMission;
+  finalTurnPlayerId: PlayerId | null;
   held: Record<PlayerId, boolean>;
   result: GameResult | null;
 };
@@ -295,6 +296,8 @@ type GameState = {
 `createdBy`와 현재 보드의 소유자를 구분한다. 내가 만든 보너스 실드를 상대 보드에 놓으면 `createdBy`는 나지만 점수는 상대에게 속한다.
 
 `lineMission`은 경기 생성 때 정한 공개 라인과 해당 경기에서 유일한 미션 종류를 함께 저장한다. `PLACEMENT_COUNT`의 기준은 3개 이상, `SCORE_OVER`의 기준은 15점 초과다. `rewardItems`는 두 플레이어 키를 모두 가지며 미달성은 `null`, 달성은 실제 지급한 `ItemType`을 기록한다. 한 플레이어가 달성해도 상대 값은 그대로 유지하며, 이후 개수나 점수가 기준 아래로 내려가도 기록을 보존해 중복 지급을 막는다.
+
+`finalTurnPlayerId`는 어느 보드든 15칸을 처음 완성했을 때 경기의 후공으로 확정한다. 이 값은 이후 파괴·알까기로 보드가 다시 14칸 이하가 되어도 유지하며, 후공이 턴을 끝내면 `FINISHED` 전환과 함께 `null`로 되돌린다. 무작위 투하처럼 턴을 끝내지 않는 명령이 15칸을 만들 수 있으므로 현재 보드만 다시 계산해서는 이 예약 상태를 대체할 수 없다.
 
 다음 값은 `GameState`에 저장하지 않거나 파생 값으로만 제공한다.
 
@@ -322,13 +325,15 @@ START_GAME
        | USE_DESTROY_ITEM -------------------> TURN_ACTION
        | USE_TURN_REROLL_ITEM ---------------> TURN_ACTION
        | USE_PARITY_ITEM --------------------> TURN_ACTION
-       | USE_DROP_ITEM -> CHECK_LINE_MISSION -> TURN_ACTION 또는 FINISHED
+       | USE_DROP_ITEM -> CHECK_LINE_MISSION -> MARK_FINAL_IF_COMPLETE -> TURN_ACTION
        | HOLD -------------------------------+
        | SURRENDER -> FINISHED                |
                                                v
-                                     CHECK_BOARD_COMPLETE
-                                        | 한쪽 15개 -> FINISHED
-                                        | 미완성
+                                      CHECK_FINAL_TURN
+                                        | 최초 15개 -> 후공 기록
+                                        | 후공 턴 종료 -> FINISHED
+                                        | 선공 턴 종료 -> 후공 마지막 턴
+                                        | 예약 없음
                                         v
                                       ADVANCE_OR_FINISH
                                         | 다음 플레이어 존재
@@ -341,7 +346,7 @@ START_GAME
 BONUS_PLACEMENT
   -> PLACE_BONUS_SHIELD
   -> CHECK_LINE_MISSION
-  -> CHECK_BOARD_COMPLETE
+  -> CHECK_FINAL_TURN
   -> ADVANCE_OR_FINISH 또는 FINISHED
 ```
 
@@ -353,7 +358,9 @@ function isEligible(state: GameState, playerId: PlayerId): boolean {
 }
 ```
 
-턴을 끝내는 배치 뒤 어느 한쪽이라도 15개를 채웠는지 먼저 검사한다. 완성된 보드가 있으면 다음 주사위를 굴리지 않고 즉시 결과를 계산한다. 미완성일 때만 상대를 먼저 검사하고, 상대가 불가능하면 현재 플레이어를 검사한다. 둘 다 불가능하면 결과를 계산한다.
+턴을 끝내는 배치 뒤 어느 한쪽이라도 15개를 채웠는지 먼저 검사한다. 처음 완성됐다면 `firstPlayerId`의 상대를 `finalTurnPlayerId`로 기록한다. 방금 행동한 플레이어가 후공이면 즉시 결과를 계산하고, 선공이면 보드가 이미 가득 찼더라도 후공에게 마지막 주사위를 굴린다. 후공이 이미 홀드했다면 추가 턴 없이 종료한다.
+
+무작위 투하는 턴을 끝내지 않으므로 완성 여부와 종료 예약만 기록하고 현재 플레이어·pending 주사위를 유지한다. 예약 이후 보드가 다시 기준 아래로 내려가도 후공의 턴 종료 시 결과를 확정한다. 예약이 없을 때만 기존 `isEligible` 순서로 다음 플레이어를 찾는다.
 
 ## 9. 순수 규칙 엔진 계약
 
@@ -584,12 +591,12 @@ interface DiceRng {
 - 실드는 제거 이벤트의 대상이 되지 않는다.
 - 실드는 아이템 및 향후 맵 효과의 대상이 되지 않는다. 모든 효과는 공통 `isDieEffectImmune` 판정을 사용한다.
 - 아이템 카탈로그의 `ITEM_TYPES`와 기본 지급 목록 `STARTING_ITEM_TYPES`는 별도이며, 카탈로그 추가만으로 새 아이템이 자동 지급되지 않는다.
-- 무작위 투하는 양쪽 보드의 빈 슬롯을 각각 균등 추첨하고, 두 배치를 모두 적용한 뒤 15칸 종료 여부를 판정한다.
+- 무작위 투하는 양쪽 보드의 빈 슬롯을 각각 균등 추첨하고, 두 배치를 모두 적용한 뒤 15칸 종료 예약 여부를 판정한다.
 - `FINISHED` 뒤 상태는 게임 명령으로 바뀌지 않는다.
 - 저장된 점수와 보드 재계산 점수가 다를 수 없다.
-- 활성 상태에는 15개를 채운 보드가 남을 수 없고, 15번째 배치 전이는 반드시 `FINISHED`로 끝난다.
+- 활성 상태의 15칸 보드는 유효한 후공 `finalTurnPlayerId`가 있을 때만 허용한다.
 - 같은 상태·명령·스크립트 RNG는 같은 전이 결과를 만든다.
-- 아이템 명령 뒤 pending 턴 주사위와 현재 플레이어는 유지되고, 같은 턴의 두 번째 아이템은 거절된다. 단, 무작위 투하로 15칸을 완성한 경우는 즉시 종료한다.
+- 아이템 명령 뒤 pending 턴 주사위와 현재 플레이어는 유지되고, 같은 턴의 두 번째 아이템은 거절된다. 무작위 투하로 15칸을 완성해도 종료 예약만 추가한다.
 
 ### 애플리케이션 통합 테스트
 

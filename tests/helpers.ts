@@ -94,6 +94,7 @@ export function board(...lanes: [Die[], Die[], Die[]]): Board {
 }
 
 export function activeState(options?: {
+  firstPlayerId?: PlayerId;
   currentPlayerId?: PlayerId;
   pendingFace?: DieFace;
   pendingKind?: DieKind;
@@ -103,14 +104,15 @@ export function activeState(options?: {
   inventory?: GameState["inventory"];
   itemUsedThisTurn?: boolean;
   lineMission?: GameState["lineMission"];
+  finalTurnPlayerId?: PlayerId | null;
 }): GameState {
   const currentPlayerId = options?.currentPlayerId ?? "A";
   return {
-    schemaVersion: 7,
+    schemaVersion: 8,
     gameId: "game_test",
     version: 0,
     players: ["A", "B"],
-    firstPlayerId: "A",
+    firstPlayerId: options?.firstPlayerId ?? "A",
     currentPlayerId,
     phase: "TURN_ACTION",
     turnNumber: 3,
@@ -157,6 +159,7 @@ export function activeState(options?: {
       threshold: 3,
       rewardItems: { A: "SHIELD", B: "SHIELD" },
     },
+    finalTurnPlayerId: options?.finalTurnPlayerId ?? null,
     held: options?.held ?? { A: false, B: false },
     result: null,
   };

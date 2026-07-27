@@ -260,6 +260,7 @@ function claimLineMissionRewards(
 function finishNormally(state: GameState, events: GameEvent[]): void {
   state.phase = "FINISHED";
   state.pending = null;
+  state.finalTurnPlayerId = null;
   state.result = calculateResult(state, "NORMAL");
   events.push({ type: "GAME_FINISHED", result: state.result });
 }
@@ -270,14 +271,30 @@ function hasCompletedBoard(state: GameState): boolean {
   );
 }
 
+function startFinalTurnIfNeeded(state: GameState): void {
+  if (state.finalTurnPlayerId !== null || !hasCompletedBoard(state)) return;
+  state.finalTurnPlayerId = opponentOf(state.players, state.firstPlayerId);
+}
+
 function advanceOrFinish(
   state: GameState,
   actorPlayerId: PlayerId,
   context: EngineContext,
   events: GameEvent[],
 ): void {
-  if (hasCompletedBoard(state)) {
-    finishNormally(state, events);
+  startFinalTurnIfNeeded(state);
+
+  const finalTurnPlayerId = state.finalTurnPlayerId;
+  if (finalTurnPlayerId !== null) {
+    if (
+      actorPlayerId === finalTurnPlayerId ||
+      state.held[finalTurnPlayerId]
+    ) {
+      finishNormally(state, events);
+      return;
+    }
+
+    rollTurnDie(state, finalTurnPlayerId, context, events);
     return;
   }
 
@@ -337,7 +354,7 @@ export function createGame(
     "No line mission kind is available.",
   );
   const state: GameState = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     gameId: context.ids.next("game"),
     version: 0,
     players,
@@ -372,6 +389,7 @@ export function createGame(
           threshold: LINE_SCORE_MISSION_THRESHOLD,
           rewardItems: { [players[0]]: null, [players[1]]: null },
         },
+    finalTurnPlayerId: null,
     held: {
       [players[0]]: false,
       [players[1]]: false,
@@ -413,6 +431,7 @@ export function applyCommand(
     const winnerPlayerId = opponentOf(state.players, actorPlayerId);
     state.phase = "FINISHED";
     state.pending = null;
+    state.finalTurnPlayerId = null;
     state.result = calculateResult(state, "SURRENDER", winnerPlayerId);
     events.push({ type: "PLAYER_SURRENDERED", playerId: actorPlayerId });
     events.push({ type: "GAME_FINISHED", result: state.result });
@@ -712,7 +731,7 @@ export function applyCommand(
         context,
         events,
       );
-      if (hasCompletedBoard(state)) finishNormally(state, events);
+      startFinalTurnIfNeeded(state);
       break;
     }
 
@@ -1035,7 +1054,7 @@ export function assertGameInvariants(state: GameState): void {
     throw new RuleError("INVARIANT_VIOLATION", message);
   };
 
-  if (state.schemaVersion !== 7) {
+  if (state.schemaVersion !== 8) {
     fail("Unsupported game state schema version.");
   }
   if (state.players.length !== 2 || state.players[0] === state.players[1]) {
@@ -1043,6 +1062,9 @@ export function assertGameInvariants(state: GameState): void {
   }
   if (!state.players.includes(state.currentPlayerId)) {
     fail("Current player must belong to the game.");
+  }
+  if (!state.players.includes(state.firstPlayerId)) {
+    fail("First player must belong to the game.");
   }
 
   const seenDice = new Set<string>();
@@ -1121,6 +1143,17 @@ export function assertGameInvariants(state: GameState): void {
     }
   }
 
+  const expectedFinalTurnPlayerId = opponentOf(
+    state.players,
+    state.firstPlayerId,
+  );
+  if (
+    state.finalTurnPlayerId !== null &&
+    state.finalTurnPlayerId !== expectedFinalTurnPlayerId
+  ) {
+    fail("Only the second player can own the final turn.");
+  }
+
   if (state.pending?.source === "TURN") {
     visitDie(state.pending.original);
     if (state.pending.candidate) visitDie(state.pending.candidate);
@@ -1158,13 +1191,22 @@ export function assertGameInvariants(state: GameState): void {
   if (state.phase === "FINISHED") {
     if (!state.result) fail("FINISHED game must have a result.");
     if (state.pending) fail("FINISHED game cannot keep pending dice.");
+    if (state.finalTurnPlayerId !== null) {
+      fail("FINISHED game cannot keep a final turn pending.");
+    }
   } else {
     if (state.result) fail("Active game cannot have a result.");
-    if (hasCompletedBoard(state)) {
-      fail("An active game cannot contain a completed board.");
+    if (hasCompletedBoard(state) && state.finalTurnPlayerId === null) {
+      fail("A completed board must schedule the second player's final turn.");
     }
-    if (!isEligible(state, state.currentPlayerId)) {
+    if (
+      state.finalTurnPlayerId === null &&
+      !isEligible(state, state.currentPlayerId)
+    ) {
       fail("Current player must be eligible while the game is active.");
+    }
+    if (state.held[state.currentPlayerId]) {
+      fail("The active player cannot already be held.");
     }
   }
 

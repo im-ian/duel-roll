@@ -72,6 +72,7 @@ describe("game engine", () => {
       B: STARTING_INVENTORY,
     });
     expect(transition.state.itemUsedThisTurn).toBe(false);
+    expect(transition.state.finalTurnPlayerId).toBeNull();
     expect(transition.state.lineMission).toEqual({
       kind: "PLACEMENT_COUNT",
       lane: 2,
@@ -436,55 +437,129 @@ describe("game engine", () => {
     }
   });
 
-  it.each([
-    ["first", "A", "B"],
-    ["second", "B", "A"],
-  ] as const)(
-    "finishes immediately when the %s player completes 15 slots",
-    (_order, completingPlayerId, opponentPlayerId) => {
-      const state = activeState({
-        currentPlayerId: completingPlayerId,
-        pendingFace: 1,
-        boards: {
-          [completingPlayerId]: board(
-            oneLane(`${completingPlayerId}-lane-1`, 5, completingPlayerId),
-            oneLane(`${completingPlayerId}-lane-2`, 5, completingPlayerId),
-            oneLane(`${completingPlayerId}-lane-3`, 4, completingPlayerId),
-          ),
-          [opponentPlayerId]: board(
-            [
-              die(`${opponentPlayerId}-6-1`, 6, "NORMAL", opponentPlayerId),
-              die(`${opponentPlayerId}-6-2`, 6, "NORMAL", opponentPlayerId),
-            ],
-            [
-              die(`${opponentPlayerId}-6-3`, 6, "NORMAL", opponentPlayerId),
-              die(`${opponentPlayerId}-6-4`, 6, "NORMAL", opponentPlayerId),
-            ],
-            [],
-          ),
-        },
-      });
-      const completed = applyCommand(
-        state,
-        completingPlayerId,
-        { type: "PLACE_OWN", lane: 2 },
-        context(),
-      );
+  it("gives the second player one final turn after the first player fills 15 slots", () => {
+    const state = activeState({
+      currentPlayerId: "A",
+      pendingFace: 1,
+      boards: {
+        A: board(
+          oneLane("a-lane-1"),
+          oneLane("a-lane-2"),
+          oneLane("a-lane-3", 4),
+        ),
+        B: board(
+          [die("b-6-1", 6, "NORMAL", "B"), die("b-6-2", 6, "NORMAL", "B")],
+          [die("b-6-3", 6, "NORMAL", "B"), die("b-6-4", 6, "NORMAL", "B")],
+          [],
+        ),
+      },
+    });
+    const engineContext = context({ rolls: [4] });
+    const completedByFirst = applyCommand(
+      state,
+      "A",
+      { type: "PLACE_OWN", lane: 2 },
+      engineContext,
+    );
 
-      expect(completed.state.phase).toBe("FINISHED");
-      expect(completed.state.pending).toBeNull();
-      expect(completed.state.result).toMatchObject({
-        reason: "NORMAL",
-        winnerPlayerId: opponentPlayerId,
-      });
-      expect(completed.events.map((event) => event.type)).toEqual([
-        "DIE_PLACED",
-        "GAME_FINISHED",
-      ]);
-    },
-  );
+    expect(completedByFirst.state).toMatchObject({
+      phase: "TURN_ACTION",
+      currentPlayerId: "B",
+      finalTurnPlayerId: "B",
+      result: null,
+      pending: { source: "TURN", original: { face: 4, createdBy: "B" } },
+    });
+    expect(completedByFirst.events.map((event) => event.type)).toEqual([
+      "DIE_PLACED",
+      "TURN_STARTED",
+      "DIE_ROLLED",
+    ]);
 
-  it("also finishes when a bonus shield completes the actor's board", () => {
+    const finished = applyCommand(
+      completedByFirst.state,
+      "B",
+      { type: "PLACE_OWN", lane: 2 },
+      engineContext,
+    );
+    expect(finished.state.phase).toBe("FINISHED");
+    expect(finished.state.pending).toBeNull();
+    expect(finished.state.finalTurnPlayerId).toBeNull();
+    expect(finished.state.result).toMatchObject({
+      reason: "NORMAL",
+      winnerPlayerId: "B",
+    });
+    expect(finished.events.map((event) => event.type)).toEqual([
+      "DIE_PLACED",
+      "GAME_FINISHED",
+    ]);
+  });
+
+  it("uses the randomized first player to identify who receives the final turn", () => {
+    const state = activeState({
+      firstPlayerId: "B",
+      currentPlayerId: "B",
+      pendingFace: 2,
+      boards: {
+        A: board([], [], []),
+        B: board(
+          oneLane("b-lane-1", 5, "B"),
+          oneLane("b-lane-2", 5, "B"),
+          oneLane("b-lane-3", 4, "B"),
+        ),
+      },
+    });
+    const completedByFirst = applyCommand(
+      state,
+      "B",
+      { type: "PLACE_OWN", lane: 2 },
+      context({ rolls: [5] }),
+    );
+
+    expect(completedByFirst.state).toMatchObject({
+      phase: "TURN_ACTION",
+      currentPlayerId: "A",
+      finalTurnPlayerId: "A",
+      pending: { source: "TURN", original: { face: 5, createdBy: "A" } },
+    });
+  });
+
+  it("finishes when the second player completes the last turn of the round", () => {
+    const state = activeState({
+      currentPlayerId: "B",
+      pendingFace: 1,
+      boards: {
+        A: board(
+          [die("a-6-1", 6), die("a-6-2", 6)],
+          [die("a-6-3", 6), die("a-6-4", 6)],
+          [],
+        ),
+        B: board(
+          oneLane("b-lane-1", 5, "B"),
+          oneLane("b-lane-2", 5, "B"),
+          oneLane("b-lane-3", 4, "B"),
+        ),
+      },
+    });
+    const completedBySecond = applyCommand(
+      state,
+      "B",
+      { type: "PLACE_OWN", lane: 2 },
+      context(),
+    );
+
+    expect(completedBySecond.state.phase).toBe("FINISHED");
+    expect(completedBySecond.state.finalTurnPlayerId).toBeNull();
+    expect(completedBySecond.state.result).toMatchObject({
+      reason: "NORMAL",
+      winnerPlayerId: "A",
+    });
+    expect(completedBySecond.events.map((event) => event.type)).toEqual([
+      "DIE_PLACED",
+      "GAME_FINISHED",
+    ]);
+  });
+
+  it("starts the second player's final turn when a bonus shield fills the first player's board", () => {
     const state = activeState({
       pendingFace: 6,
       boards: {
@@ -496,7 +571,7 @@ describe("game engine", () => {
         B: board([], [], [die("target", 6, "NORMAL", "B")]),
       },
     });
-    const engineContext = context({ rolls: [2] });
+    const engineContext = context({ rolls: [2, 4] });
     const attacked = applyCommand(
       state,
       "A",
@@ -511,8 +586,17 @@ describe("game engine", () => {
     );
 
     expect(completed.state.boards.A?.[2]).toHaveLength(5);
-    expect(completed.state.phase).toBe("FINISHED");
-    expect(completed.events.at(-1)?.type).toBe("GAME_FINISHED");
+    expect(completed.state).toMatchObject({
+      phase: "TURN_ACTION",
+      currentPlayerId: "B",
+      finalTurnPlayerId: "B",
+      pending: { source: "TURN", original: { face: 4, createdBy: "B" } },
+    });
+    expect(completed.events.map((event) => event.type)).toEqual([
+      "DIE_PLACED",
+      "TURN_STARTED",
+      "DIE_ROLLED",
+    ]);
   });
 
   it("awards the board owner when a bonus shield completes a placement mission", () => {
@@ -605,34 +689,35 @@ describe("game engine", () => {
     });
   });
 
-  it("never makes a held player eligible again", () => {
+  it("finishes without another turn when the second player already held", () => {
     const state = activeState({
-      held: { A: true, B: false },
-      currentPlayerId: "B",
+      held: { A: false, B: true },
+      currentPlayerId: "A",
       pendingFace: 6,
       boards: {
-        A: board([die("a", 1)], [], []),
-        B: board(
-          fullLane("b-lane-1", "B"),
-          fullLane("b-lane-2", "B"),
+        A: board(
+          fullLane("a-lane-1"),
+          fullLane("a-lane-2"),
           [
-            die("b-lane-3-1", 1, "NORMAL", "B"),
-            die("b-lane-3-2", 2, "NORMAL", "B"),
-            die("b-lane-3-3", 3, "NORMAL", "B"),
-            die("b-lane-3-4", 4, "NORMAL", "B"),
+            die("a-lane-3-1", 1),
+            die("a-lane-3-2", 2),
+            die("a-lane-3-3", 3),
+            die("a-lane-3-4", 4),
           ],
         ),
+        B: board([die("b", 1, "NORMAL", "B")], [], []),
       },
     });
 
-    expect(isEligible(state, "A")).toBe(false);
+    expect(isEligible(state, "B")).toBe(false);
     const finished = applyCommand(
       state,
-      "B",
+      "A",
       { type: "PLACE_OWN", lane: 2 },
-      context({ rolls: [1] }),
+      context(),
     );
     expect(finished.state.phase).toBe("FINISHED");
+    expect(finished.state.finalTurnPlayerId).toBeNull();
     expect(finished.state.result?.reason).toBe("NORMAL");
   });
 
@@ -1044,7 +1129,7 @@ describe("game engine", () => {
     ]);
   });
 
-  it("resolves both random drops before finishing when they fill both boards", () => {
+  it("keeps the drop turn active and lets the second player finish even when both boards fill", () => {
     const state = activeState({
       boards: {
         A: board(oneLane("a-1"), oneLane("a-2"), oneLane("a-3", 4)),
@@ -1055,19 +1140,141 @@ describe("game engine", () => {
         ),
       },
     });
+    const engineContext = context({
+      indexes: [0, 0],
+      rolls: [2, 3, 4],
+    });
     const dropped = applyCommand(
       state,
       "A",
       { type: "USE_DROP_ITEM" },
-      context({ indexes: [0, 0], rolls: [2, 3] }),
+      engineContext,
     );
 
     expect(dropped.state.boards.A?.[2]).toHaveLength(5);
     expect(dropped.state.boards.B?.[2]).toHaveLength(5);
-    expect(dropped.state.phase).toBe("FINISHED");
-    expect(dropped.state.pending).toBeNull();
-    expect(dropped.events.map((event) => event.type)).toEqual([
-      "DICE_DROPPED",
+    expect(dropped.state).toMatchObject({
+      phase: "TURN_ACTION",
+      currentPlayerId: "A",
+      finalTurnPlayerId: "B",
+      itemUsedThisTurn: true,
+    });
+    expect(dropped.state.pending).toEqual(state.pending);
+    expect(dropped.events.map((event) => event.type)).toEqual(["DICE_DROPPED"]);
+
+    const firstTurnEnded = applyCommand(
+      dropped.state,
+      "A",
+      { type: "HOLD" },
+      engineContext,
+    );
+    expect(firstTurnEnded.state).toMatchObject({
+      phase: "TURN_ACTION",
+      currentPlayerId: "B",
+      finalTurnPlayerId: "B",
+      pending: { source: "TURN", original: { face: 4, createdBy: "B" } },
+    });
+    expect(firstTurnEnded.events.map((event) => event.type)).toEqual([
+      "DIE_SPENT",
+      "PLAYER_HELD",
+      "TURN_STARTED",
+      "DIE_ROLLED",
+    ]);
+
+    const finished = applyCommand(
+      firstTurnEnded.state,
+      "B",
+      { type: "HOLD" },
+      engineContext,
+    );
+    expect(finished.state.phase).toBe("FINISHED");
+    expect(finished.state.finalTurnPlayerId).toBeNull();
+    expect(finished.events.map((event) => event.type)).toEqual([
+      "DIE_SPENT",
+      "PLAYER_HELD",
+      "GAME_FINISHED",
+    ]);
+  });
+
+  it("lets the second player finish the current turn when its drop fills a board", () => {
+    const state = activeState({
+      currentPlayerId: "B",
+      boards: {
+        A: board(oneLane("a-1"), oneLane("a-2"), oneLane("a-3", 4)),
+        B: board(
+          oneLane("b-1", 5, "B"),
+          oneLane("b-2", 5, "B"),
+          oneLane("b-3", 4, "B"),
+        ),
+      },
+    });
+    const engineContext = context({ indexes: [0, 0], rolls: [2, 3] });
+    const dropped = applyCommand(
+      state,
+      "B",
+      { type: "USE_DROP_ITEM" },
+      engineContext,
+    );
+
+    expect(dropped.state).toMatchObject({
+      phase: "TURN_ACTION",
+      currentPlayerId: "B",
+      finalTurnPlayerId: "B",
+      result: null,
+    });
+    expect(dropped.state.pending).toEqual(state.pending);
+
+    const finished = applyCommand(
+      dropped.state,
+      "B",
+      { type: "HOLD" },
+      engineContext,
+    );
+    expect(finished.state.phase).toBe("FINISHED");
+    expect(finished.events.at(-1)?.type).toBe("GAME_FINISHED");
+  });
+
+  it("finishes after the final turn even if destruction reopens the completed board", () => {
+    const state = activeState({
+      currentPlayerId: "B",
+      pendingFace: 4,
+      finalTurnPlayerId: "B",
+      boards: {
+        A: board(oneLane("a-1"), oneLane("a-2"), oneLane("a-3")),
+        B: board([], [], []),
+      },
+    });
+    const engineContext = context();
+    const destroyed = applyCommand(
+      state,
+      "B",
+      {
+        type: "USE_DESTROY_ITEM",
+        boardOwnerPlayerId: "A",
+        lane: 2,
+        dieId: "a-3-5",
+      },
+      engineContext,
+    );
+
+    expect(destroyed.state.boards.A?.[2]).toHaveLength(4);
+    expect(destroyed.state).toMatchObject({
+      phase: "TURN_ACTION",
+      currentPlayerId: "B",
+      finalTurnPlayerId: "B",
+      result: null,
+    });
+
+    const finished = applyCommand(
+      destroyed.state,
+      "B",
+      { type: "PLACE_OWN", lane: 0 },
+      engineContext,
+    );
+    expect(finished.state.phase).toBe("FINISHED");
+    expect(finished.state.finalTurnPlayerId).toBeNull();
+    expect(finished.events.map((event) => event.type)).toEqual([
+      "DIE_PLACED",
       "GAME_FINISHED",
     ]);
   });

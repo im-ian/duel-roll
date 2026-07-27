@@ -70,7 +70,7 @@ export type GameResult = {
 };
 
 export type GameState = {
-  schemaVersion: 7;
+  schemaVersion: 8;
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
@@ -84,6 +84,7 @@ export type GameState = {
   inventory: Record<PlayerId, ItemInventory>;
   itemUsedThisTurn: boolean;
   lineMission: LineMission;
+  finalTurnPlayerId: PlayerId | null;
   held: Record<PlayerId, boolean>;
   result: GameResult | null;
 };
