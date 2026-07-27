@@ -235,6 +235,8 @@ export function LaneCard({
   onOpponentDieClick,
   onOwnDieClick,
   placementHint,
+  isRewardLane = false,
+  rewardClaimed = false,
 }: {
   lane: LaneIndex;
   opponentDice: Die[];
@@ -250,6 +252,8 @@ export function LaneCard({
   onOpponentDieClick?: (die: Die) => void;
   onOwnDieClick?: (die: Die) => void;
   placementHint?: { scoreGain: number; isRecommended: boolean };
+  isRewardLane?: boolean;
+  rewardClaimed?: boolean;
 }) {
   const difference = ownScore - opponentScore;
   const verdict =
@@ -260,12 +264,19 @@ export function LaneCard({
         : "동률";
   return (
     <section
-      className={`lane-card ${placementHint?.isRecommended ? "lane-card--recommended" : ""}`}
-      aria-label={`${lane + 1}번 라인${placementHint?.isRecommended ? ", 초보 가이드 추천" : ""}`}
+      className={`lane-card ${placementHint?.isRecommended ? "lane-card--recommended" : ""} ${
+        isRewardLane ? "lane-card--reward" : ""
+      }`}
+      aria-label={`${lane + 1}번 라인${isRewardLane ? ", 보상 라인" : ""}${placementHint?.isRecommended ? ", 초보 가이드 추천" : ""}`}
     >
       <header className="lane-card__header">
         <span>
           LINE 0{lane + 1}
+          {isRewardLane && (
+            <b className="lane-card__reward-badge">
+              {rewardClaimed ? "보상 완료" : "보상 라인"}
+            </b>
+          )}
           {placementHint?.isRecommended && <b>추천</b>}
         </span>
         <span className={difference > 0 ? "ahead" : difference < 0 ? "behind" : ""}>

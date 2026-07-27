@@ -102,10 +102,11 @@ export function activeState(options?: {
   tazzaUsed?: Record<PlayerId, boolean>;
   inventory?: GameState["inventory"];
   itemUsedThisTurn?: boolean;
+  lineReward?: GameState["lineReward"];
 }): GameState {
   const currentPlayerId = options?.currentPlayerId ?? "A";
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     gameId: "game_test",
     version: 0,
     players: ["A", "B"],
@@ -150,6 +151,12 @@ export function activeState(options?: {
       },
     },
     itemUsedThisTurn: options?.itemUsedThisTurn ?? false,
+    lineReward: options?.lineReward ?? {
+      lane: 0,
+      threshold: 3,
+      claimedByPlayerId: "A",
+      itemType: "SHIELD",
+    },
     held: options?.held ?? { A: false, B: false },
     result: null,
   };

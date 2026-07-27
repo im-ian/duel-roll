@@ -7,6 +7,7 @@ import type {
   GameCommand,
   GameEvent,
   ItemInventory,
+  ItemType,
   LaneIndex,
   PlayerId,
 } from "../game";
@@ -36,6 +37,16 @@ type ItemMode =
 const GAME_END_TRANSITION_MS = 2_000;
 const BEGINNER_GUIDE_STORAGE_KEY = "roll-duel:beginner-guide";
 const DROP_ITEM_LABEL = "무작위 투하";
+const ITEM_LABELS: Record<ItemType, string> = {
+  SWAP: "주사위 교환",
+  REROLL: "눈 변환",
+  SHIELD: "실드 강화",
+  DROP: DROP_ITEM_LABEL,
+  DESTROY: "주사위 파괴",
+  TURN_REROLL: "주사위 리롤",
+  ODD: "홀수 주사위",
+  EVEN: "짝수 주사위",
+};
 const EMPTY_INVENTORY: ItemInventory = {
   SWAP: 0,
   REROLL: 0,
@@ -281,6 +292,7 @@ function eventText(event: GameEvent, selfPlayerId: PlayerId): string {
     case "DIE_DESTROYED": return `${who(event.playerId)} ${event.boardOwnerPlayerId === selfPlayerId ? "내" : "상대"} 주사위를 파괴했습니다.`;
     case "TURN_DIE_REROLLED": return `${who(event.playerId)} 현재 주사위를 ${event.previousDie.face}→${event.die.face}로 다시 굴렸습니다.`;
     case "TURN_DIE_PARITY_CHANGED": return `${who(event.playerId)} 현재 주사위를 ${event.parity === "ODD" ? "홀수" : "짝수"} ${event.previousDie.face}→${event.die.face}로 바꿨습니다.`;
+    case "LINE_REWARD_CLAIMED": return `${who(event.playerId)} ${event.lane + 1}번 보상 라인을 완성해 ${ITEM_LABELS[event.itemType]} 아이템을 받았습니다.`;
     case "PLAYER_HELD": return `${who(event.playerId)} 홀드했습니다.`;
     case "PLAYER_SURRENDERED": return `${who(event.playerId)} 항복했습니다.`;
     case "GAME_FINISHED": return "경기가 끝났습니다.";
@@ -310,7 +322,12 @@ const TUTORIAL_STEPS = [
     body: "현재 눈과 같은 상대의 일반 주사위를 같은 라인에서 모두 제거할 수 있습니다. 공격 뒤 받은 실드는 어느 쪽 빈 라인에도 놓을 수 있습니다.",
   },
   {
-    eyebrow: "05 · TACTICS",
+    eyebrow: "05 · REWARD LINE",
+    title: "보상 라인을 먼저 완성하세요",
+    body: "게임마다 무작위 라인 하나가 보상 라인이 됩니다. 그 라인에 주사위 3개를 먼저 놓은 플레이어는 여덟 종류 중 무작위 아이템 하나를 받습니다.",
+  },
+  {
+    eyebrow: "06 · TACTICS",
     title: "특수 행동으로 흐름을 바꾸세요",
     body: "타짜는 경기당 한 번, 아이템은 내 턴마다 한 개까지 사용할 수 있습니다. 아이템을 쓴 뒤에도 현재 주사위를 놓거나 공격할 수 있습니다.",
   },
@@ -400,6 +417,28 @@ function TutorialVisual({ step }: { step: number }) {
     );
   }
 
+  if (step === 4) {
+    return (
+      <div className="tutorial-visual tutorial-reward" aria-label="보상 라인에 주사위 세 개를 먼저 놓고 무작위 아이템을 받는 예시">
+        <div className="tutorial-reward__lane">
+          <span>REWARD LINE 02</span>
+          <div>
+            <DieView die={tutorialDie(2, "reward-a")} />
+            <DieView die={tutorialDie(5, "reward-b")} />
+            <DieView die={tutorialDie(3, "reward-c")} />
+          </div>
+          <strong>3 / 3</strong>
+        </div>
+        <span className="tutorial-reward__arrow" aria-hidden="true">→</span>
+        <div className="tutorial-reward__item">
+          <span aria-hidden="true">?</span>
+          <strong>랜덤 아이템</strong>
+          <small>8종 중 1개</small>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="tutorial-visual tutorial-tools" aria-label="타짜와 아이템 사용 규칙">
       <div><span>✦</span><strong>타짜</strong><small>경기당 1회</small></div>
@@ -415,7 +454,7 @@ function TutorialSheet({ onClose }: { onClose: () => void }) {
   const isLast = step === TUTORIAL_STEPS.length - 1;
 
   return (
-    <Sheet title="게임 튜토리얼" description="다섯 장으로 핵심 규칙을 익혀보세요." onClose={onClose}>
+    <Sheet title="게임 튜토리얼" description="여섯 장으로 핵심 규칙을 익혀보세요." onClose={onClose}>
       <section className="tutorial-step" aria-live="polite">
         <TutorialVisual step={step} />
         <div className="tutorial-step__copy">
@@ -547,6 +586,20 @@ function GameScreen({
   const placementHintsByLane = new Map(
     placementHints.map((hint) => [hint.lane, hint]),
   );
+  const lineReward = state.lineReward;
+  const ownRewardProgress = Math.min(
+    ownBoard[lineReward.lane].length,
+    lineReward.threshold,
+  );
+  const opponentRewardProgress = Math.min(
+    opponentBoard[lineReward.lane].length,
+    lineReward.threshold,
+  );
+  const lineRewardClaimed = lineReward.claimedByPlayerId !== null;
+  const lineRewardClaimedBySelf = lineReward.claimedByPlayerId === selfId;
+  const lineRewardItemLabel = lineReward.itemType
+    ? ITEM_LABELS[lineReward.itemType]
+    : null;
   const swapItemStatus = state.itemUsedThisTurn
     ? "이번 턴 사용 완료"
     : inventory.SWAP <= 0
@@ -661,6 +714,29 @@ function GameScreen({
         <div><span>{self?.nickname ?? "나"}</span><strong>{ownTotal}</strong></div>
         <p>{ending ? "게임 종료" : isMyTurn ? "내 차례" : "상대 차례"}<small>TURN {String(state.turnNumber).padStart(2, "0")}</small></p>
         <div><span>{opponent?.nickname ?? "상대"}</span><strong>{opponentTotal}</strong></div>
+      </section>
+
+      <section className={`line-reward ${lineRewardClaimed ? "line-reward--claimed" : ""}`}>
+        <span className="line-reward__lane" aria-hidden="true">
+          <small>LINE</small>
+          0{lineReward.lane + 1}
+        </span>
+        <div className="line-reward__copy">
+          <p className="eyebrow">RANDOM ITEM OBJECTIVE</p>
+          <strong>
+            {lineRewardClaimed
+              ? `${lineRewardClaimedBySelf ? "내가" : "상대가"} ${lineRewardItemLabel ?? "아이템"} 획득`
+              : `${lineReward.lane + 1}번 라인에 먼저 ${lineReward.threshold}개`}
+          </strong>
+          <small>{lineRewardClaimed ? "이번 경기의 라인 보상이 지급됐습니다." : "완성하면 무작위 아이템 1개를 받습니다."}</small>
+        </div>
+        <div
+          className="line-reward__progress"
+          aria-label={`보상 라인 진행도, 나 ${ownRewardProgress}/${lineReward.threshold}, 상대 ${opponentRewardProgress}/${lineReward.threshold}`}
+        >
+          <span className="mine">나 <b>{ownRewardProgress}/{lineReward.threshold}</b></span>
+          <span>상대 <b>{opponentRewardProgress}/{lineReward.threshold}</b></span>
+        </div>
       </section>
 
       {!ending && (
@@ -792,6 +868,8 @@ function GameScreen({
               opponentScore={opponentScores[lane]}
               ownScore={ownScores[lane]}
               placementHint={placementHintsByLane.get(lane)}
+              isRewardLane={lineReward.lane === lane}
+              rewardClaimed={lineRewardClaimed}
               disabled={controlsLocked}
               opponentSelectableDieIds={opponentSelectableDieIds}
               ownSelectableDieIds={ownSelectableDieIds}

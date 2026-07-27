@@ -22,6 +22,13 @@ export type Die = {
 };
 export type Board = [Die[], Die[], Die[]];
 
+export type LineReward = {
+  lane: LaneIndex;
+  threshold: 3;
+  claimedByPlayerId: PlayerId | null;
+  itemType: ItemType | null;
+};
+
 export type DroppedDiePlacement = {
   boardOwnerPlayerId: PlayerId;
   lane: LaneIndex;
@@ -61,7 +68,7 @@ export type GameResult = {
 };
 
 export type GameState = {
-  schemaVersion: 4;
+  schemaVersion: 5;
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
@@ -74,6 +81,7 @@ export type GameState = {
   tazzaUsed: Record<PlayerId, boolean>;
   inventory: Record<PlayerId, ItemInventory>;
   itemUsedThisTurn: boolean;
+  lineReward: LineReward;
   held: Record<PlayerId, boolean>;
   result: GameResult | null;
 };
@@ -191,6 +199,13 @@ export type GameEvent =
       playerId: PlayerId;
       previousDie: Die;
       die: Die;
+    }
+  | {
+      type: "LINE_REWARD_CLAIMED";
+      playerId: PlayerId;
+      lane: LaneIndex;
+      threshold: 3;
+      itemType: ItemType;
     }
   | {
       type: "TAZZA_SELECTED";

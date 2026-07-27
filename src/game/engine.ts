@@ -4,6 +4,7 @@ import {
   ITEM_TYPES,
   LANE_CAPACITY,
   LANE_COUNT,
+  LINE_REWARD_THRESHOLD,
   STARTING_ITEM_COUNT,
   STARTING_ITEM_TYPES,
 } from "./constants";
@@ -206,6 +207,49 @@ function consumeItem(
   state.itemUsedThisTurn = true;
 }
 
+function claimLineReward(
+  state: GameState,
+  possibleClaimants: readonly PlayerId[],
+  context: EngineContext,
+  events: GameEvent[],
+): void {
+  const reward = state.lineReward;
+  if (reward.claimedByPlayerId !== null) return;
+
+  const possibleClaimantSet = new Set(possibleClaimants);
+  const eligibleClaimants = state.players.filter(
+    (playerId) =>
+      possibleClaimantSet.has(playerId) &&
+      boardOf(state, playerId)[reward.lane].length >= reward.threshold,
+  );
+  if (eligibleClaimants.length === 0) return;
+
+  const playerId = eligibleClaimants.length === 1
+    ? eligibleClaimants[0]
+    : pickRandom(
+        eligibleClaimants,
+        context,
+        "No player is available to claim the line reward.",
+      );
+  invariant(playerId, "The line reward claimant disappeared unexpectedly.");
+  const itemType = pickRandom(
+    ITEM_TYPES,
+    context,
+    "No item is available for the line reward.",
+  );
+
+  inventoryOf(state, playerId)[itemType] += 1;
+  reward.claimedByPlayerId = playerId;
+  reward.itemType = itemType;
+  events.push({
+    type: "LINE_REWARD_CLAIMED",
+    playerId,
+    lane: reward.lane,
+    threshold: reward.threshold,
+    itemType,
+  });
+}
+
 function finishNormally(state: GameState, events: GameEvent[]): void {
   state.phase = "FINISHED";
   state.pending = null;
@@ -275,8 +319,13 @@ export function createGame(
     "SHIELD",
     context,
   );
+  const rewardLane = pickRandom(
+    laneIndexes(),
+    context,
+    "No lane is available for the line reward.",
+  );
   const state: GameState = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     gameId: context.ids.next("game"),
     version: 0,
     players,
@@ -298,6 +347,12 @@ export function createGame(
       [players[1]]: createStartingInventory(),
     },
     itemUsedThisTurn: false,
+    lineReward: {
+      lane: rewardLane,
+      threshold: LINE_REWARD_THRESHOLD,
+      claimedByPlayerId: null,
+      itemType: null,
+    },
     held: {
       [players[0]]: false,
       [players[1]]: false,
@@ -368,6 +423,9 @@ export function applyCommand(
         lane: command.lane,
         die,
       });
+      if (command.lane === state.lineReward.lane) {
+        claimLineReward(state, [actorPlayerId], context, events);
+      }
       advanceOrFinish(state, actorPlayerId, context, events);
       break;
     }
@@ -605,6 +663,14 @@ export function applyCommand(
         playerId: actorPlayerId,
         placements,
       });
+      claimLineReward(
+        state,
+        placements
+          .filter(({ lane }) => lane === state.lineReward.lane)
+          .map(({ boardOwnerPlayerId }) => boardOwnerPlayerId),
+        context,
+        events,
+      );
       if (hasCompletedBoard(state)) finishNormally(state, events);
       break;
     }
@@ -765,6 +831,14 @@ export function applyCommand(
         lane: command.lane,
         die,
       });
+      if (command.lane === state.lineReward.lane) {
+        claimLineReward(
+          state,
+          [command.boardOwnerPlayerId],
+          context,
+          events,
+        );
+      }
       advanceOrFinish(state, actorPlayerId, context, events);
       break;
     }
@@ -920,6 +994,9 @@ export function assertGameInvariants(state: GameState): void {
     throw new RuleError("INVARIANT_VIOLATION", message);
   };
 
+  if (state.schemaVersion !== 5) {
+    fail("Unsupported game state schema version.");
+  }
   if (state.players.length !== 2 || state.players[0] === state.players[1]) {
     fail("Game must contain two distinct players.");
   }
@@ -961,6 +1038,36 @@ export function assertGameInvariants(state: GameState): void {
 
   if (typeof state.itemUsedThisTurn !== "boolean") {
     fail("itemUsedThisTurn must be a boolean.");
+  }
+
+  const lineReward = state.lineReward;
+  invariant(lineReward, "Game must contain a line reward objective.");
+  if (
+    !Number.isInteger(lineReward.lane) ||
+    lineReward.lane < 0 ||
+    lineReward.lane >= LANE_COUNT
+  ) {
+    fail("Line reward must target a valid lane.");
+  }
+  if (lineReward.threshold !== LINE_REWARD_THRESHOLD) {
+    fail(`Line reward threshold must be ${LINE_REWARD_THRESHOLD}.`);
+  }
+  const hasRewardClaimant = lineReward.claimedByPlayerId !== null;
+  const hasRewardItem = lineReward.itemType !== null;
+  if (hasRewardClaimant !== hasRewardItem) {
+    fail("Line reward claimant and item must be recorded together.");
+  }
+  if (
+    lineReward.claimedByPlayerId !== null &&
+    !state.players.includes(lineReward.claimedByPlayerId)
+  ) {
+    fail("Line reward claimant must belong to the game.");
+  }
+  if (
+    lineReward.itemType !== null &&
+    !ITEM_TYPES.includes(lineReward.itemType)
+  ) {
+    fail("Line reward item must belong to the item catalog.");
   }
 
   if (state.pending?.source === "TURN") {

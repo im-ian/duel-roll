@@ -58,7 +58,7 @@ describe("game engine", () => {
   it("starts with a server-selected first player and an opening shield", () => {
     const transition = createGame(
       ["A", "B"],
-      context({ firstPlayer: "B", rolls: [4] }),
+      context({ firstPlayer: "B", rolls: [4], indexes: [2] }),
     );
 
     expect(transition.state.firstPlayerId).toBe("B");
@@ -72,11 +72,102 @@ describe("game engine", () => {
       B: STARTING_INVENTORY,
     });
     expect(transition.state.itemUsedThisTurn).toBe(false);
+    expect(transition.state.lineReward).toEqual({
+      lane: 2,
+      threshold: 3,
+      claimedByPlayerId: null,
+      itemType: null,
+    });
     expect(transition.events.map((event) => event.type)).toEqual([
       "GAME_STARTED",
       "TURN_STARTED",
       "DIE_ROLLED",
     ]);
+  });
+
+  it("awards one random catalog item to the first player reaching three dice in the reward lane", () => {
+    const state = activeState({
+      boards: {
+        A: board([], [die("a-1", 2), die("a-2", 4)], []),
+        B: board([], [die("b-1", 1, "NORMAL", "B"), die("b-2", 3, "NORMAL", "B")], []),
+      },
+      lineReward: {
+        lane: 1,
+        threshold: 3,
+        claimedByPlayerId: null,
+        itemType: null,
+      },
+    });
+    const engineContext = context({ rolls: [2, 3], indexes: [5] });
+    const awarded = applyCommand(
+      state,
+      "A",
+      { type: "PLACE_OWN", lane: 1 },
+      engineContext,
+    );
+
+    expect(awarded.state.lineReward).toEqual({
+      lane: 1,
+      threshold: 3,
+      claimedByPlayerId: "A",
+      itemType: "TURN_REROLL",
+    });
+    expect(awarded.state.inventory.A?.TURN_REROLL).toBe(1);
+    expect(awarded.events.map((event) => event.type)).toEqual([
+      "DIE_PLACED",
+      "LINE_REWARD_CLAIMED",
+      "TURN_STARTED",
+      "DIE_ROLLED",
+    ]);
+    expect(awarded.events[1]).toEqual({
+      type: "LINE_REWARD_CLAIMED",
+      playerId: "A",
+      lane: 1,
+      threshold: 3,
+      itemType: "TURN_REROLL",
+    });
+
+    const afterOpponentReachesThree = applyCommand(
+      awarded.state,
+      "B",
+      { type: "PLACE_OWN", lane: 1 },
+      engineContext,
+    );
+    expect(afterOpponentReachesThree.state.inventory.B?.TURN_REROLL).toBe(0);
+    expect(
+      afterOpponentReachesThree.events.some(
+        (event) => event.type === "LINE_REWARD_CLAIMED",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not award the line reward before the threshold or in another lane", () => {
+    const state = activeState({
+      boards: {
+        A: board([], [], [die("a-1", 2)]),
+        B: board([], [], []),
+      },
+      lineReward: {
+        lane: 2,
+        threshold: 3,
+        claimedByPlayerId: null,
+        itemType: null,
+      },
+    });
+    const placedElsewhere = applyCommand(
+      state,
+      "A",
+      { type: "PLACE_OWN", lane: 0 },
+      context({ rolls: [2] }),
+    );
+
+    expect(placedElsewhere.state.lineReward.claimedByPlayerId).toBeNull();
+    expect(placedElsewhere.state.inventory.A).toEqual(state.inventory.A);
+    expect(
+      placedElsewhere.events.some(
+        (event) => event.type === "LINE_REWARD_CLAIMED",
+      ),
+    ).toBe(false);
   });
 
   it("preserves the shield kind when Tazza changes the opening face", () => {
@@ -276,6 +367,54 @@ describe("game engine", () => {
     expect(completed.state.boards.A?.[2]).toHaveLength(5);
     expect(completed.state.phase).toBe("FINISHED");
     expect(completed.events.at(-1)?.type).toBe("GAME_FINISHED");
+  });
+
+  it("awards the board owner when a bonus shield reaches the reward threshold", () => {
+    const state = activeState({
+      pendingFace: 6,
+      boards: {
+        A: board([], [], []),
+        B: board(
+          [die("attack-target", 6, "NORMAL", "B")],
+          [
+            die("reward-1", 2, "NORMAL", "B"),
+            die("reward-2", 4, "NORMAL", "B"),
+          ],
+          [],
+        ),
+      },
+      lineReward: {
+        lane: 1,
+        threshold: 3,
+        claimedByPlayerId: null,
+        itemType: null,
+      },
+    });
+    const engineContext = context({ rolls: [4, 2], indexes: [7] });
+    const attacked = applyCommand(
+      state,
+      "A",
+      { type: "ALKKAGI", lane: 0 },
+      engineContext,
+    );
+    const awarded = applyCommand(
+      attacked.state,
+      "A",
+      { type: "PLACE_BONUS_SHIELD", boardOwnerPlayerId: "B", lane: 1 },
+      engineContext,
+    );
+
+    expect(awarded.state.lineReward).toMatchObject({
+      claimedByPlayerId: "B",
+      itemType: "EVEN",
+    });
+    expect(awarded.state.inventory.B?.EVEN).toBe(2);
+    expect(awarded.events[1]).toMatchObject({
+      type: "LINE_REWARD_CLAIMED",
+      playerId: "B",
+      lane: 1,
+      itemType: "EVEN",
+    });
   });
 
   it("never makes a held player eligible again", () => {
@@ -668,6 +807,47 @@ describe("game engine", () => {
     expect(dropped.events.map((event) => event.type)).toEqual([
       "DICE_DROPPED",
       "GAME_FINISHED",
+    ]);
+  });
+
+  it("uses server RNG to break a simultaneous drop tie for the line reward", () => {
+    const state = activeState({
+      boards: {
+        A: board([die("a-1", 1), die("a-2", 2)], [], []),
+        B: board(
+          [
+            die("b-1", 3, "NORMAL", "B"),
+            die("b-2", 4, "NORMAL", "B"),
+          ],
+          [],
+          [],
+        ),
+      },
+      lineReward: {
+        lane: 0,
+        threshold: 3,
+        claimedByPlayerId: null,
+        itemType: null,
+      },
+    });
+    const dropped = applyCommand(
+      state,
+      "A",
+      { type: "USE_DROP_ITEM" },
+      context({ indexes: [0, 0, 1, 0], rolls: [2, 3] }),
+    );
+
+    expect(dropped.state.boards.A?.[0]).toHaveLength(3);
+    expect(dropped.state.boards.B?.[0]).toHaveLength(3);
+    expect(dropped.state.lineReward).toMatchObject({
+      claimedByPlayerId: "B",
+      itemType: "SWAP",
+    });
+    expect(dropped.state.inventory.A?.DROP).toBe(0);
+    expect(dropped.state.inventory.B?.SWAP).toBe(2);
+    expect(dropped.events.map((event) => event.type)).toEqual([
+      "DICE_DROPPED",
+      "LINE_REWARD_CLAIMED",
     ]);
   });
 
