@@ -60,7 +60,7 @@ tests          규칙 및 서버 통합 테스트
 docs           규칙·아키텍처·UX 명세
 ```
 
-설계 기준은 [문서 인덱스](./docs/README.md), 세부 규칙은 [게임 규칙 명세](./docs/game-rules.md)를 참고한다.
+설계 기준은 [문서 인덱스](./docs/README.md), 세부 규칙은 [게임 규칙 명세](./docs/game-rules.md), 아이템 카탈로그와 기본 지급은 [아이템 명세](./docs/items.md)를 참고한다.
 
 ## 검증
 

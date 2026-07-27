@@ -170,6 +170,8 @@ WAITING_FOR_OPPONENT
 
 ### 게임 명령
 
+아이템 카탈로그와 기본 지급·개별 효과는 [아이템 명세](./items.md), 최종 합법성은 [게임 규칙 명세](./game-rules.md)를 따른다.
+
 | 명령 | payload | 주요 검증 |
 | --- | --- | --- |
 | `PLACE_OWN` | `{ lane }` | 내 턴, `TURN_ACTION`, 내 라인 빈칸 |
