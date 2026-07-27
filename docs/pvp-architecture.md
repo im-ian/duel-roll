@@ -241,6 +241,12 @@ type LineReward = {
   itemType: ItemType | null;
 };
 
+type LineScoreReward = {
+  threshold: 15;
+  claimedByPlayerId: PlayerId | null;
+  itemType: ItemType | null;
+};
+
 type TurnPending =
   | {
       source: "TURN";
@@ -269,7 +275,7 @@ type GameResult = {
 };
 
 type GameState = {
-  schemaVersion: 5;
+  schemaVersion: 6;
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
@@ -283,6 +289,7 @@ type GameState = {
   inventory: Record<PlayerId, ItemInventory>;
   itemUsedThisTurn: boolean;
   lineReward: LineReward;
+  lineScoreReward: LineScoreReward;
   held: Record<PlayerId, boolean>;
   result: GameResult | null;
 };
@@ -290,7 +297,7 @@ type GameState = {
 
 `createdBy`와 현재 보드의 소유자를 구분한다. 내가 만든 보너스 실드를 상대 보드에 놓으면 `createdBy`는 나지만 점수는 상대에게 속한다.
 
-`lineReward`는 경기 생성 때 정한 공개 목표다. `claimedByPlayerId`와 `itemType`은 보상 전에는 함께 `null`, 보상 뒤에는 함께 확정값이어야 한다. 달성 뒤 주사위가 제거되어 진행도가 3 아래로 내려가도 이 기록은 유지해 중복 지급을 막는다.
+`lineReward`는 경기 생성 때 정한 공개 라인과 3개 선점 기록이고, `lineScoreReward`는 같은 라인의 15점 선점 기록이다. 각 객체의 `claimedByPlayerId`와 `itemType`은 보상 전에는 함께 `null`, 보상 뒤에는 함께 확정값이어야 한다. 달성 뒤 개수나 점수가 기준 아래로 내려가도 기록을 유지해 중복 지급을 막는다.
 
 다음 값은 `GameState`에 저장하지 않거나 파생 값으로만 제공한다.
 
@@ -309,16 +316,16 @@ START_GAME
   -> CHOOSE_FIRST_PLAYER
   -> ROLL_TURN_DIE
   -> TURN_ACTION
-       | PLACE_OWN -> CHECK_LINE_REWARD -----+
+       | PLACE_OWN -> CHECK_LINE_OBJECTIVES -+
        | ALKKAGI -> ROLL_BONUS -> BONUS_PLACEMENT
        | USE_TAZZA -> TAZZA_CHOICE -> TURN_ACTION
-       | USE_SWAP_ITEM ----------------------> TURN_ACTION
-       | USE_REROLL_ITEM --------------------> TURN_ACTION
+       | USE_SWAP_ITEM -> CHECK_LINE_SCORE ---> TURN_ACTION
+       | USE_REROLL_ITEM -> CHECK_LINE_SCORE -> TURN_ACTION
        | USE_SHIELD_ITEM --------------------> TURN_ACTION
        | USE_DESTROY_ITEM -------------------> TURN_ACTION
        | USE_TURN_REROLL_ITEM ---------------> TURN_ACTION
        | USE_PARITY_ITEM --------------------> TURN_ACTION
-       | USE_DROP_ITEM -> CHECK_LINE_REWARD -> TURN_ACTION 또는 FINISHED
+       | USE_DROP_ITEM -> CHECK_LINE_OBJECTIVES -> TURN_ACTION 또는 FINISHED
        | HOLD -------------------------------+
        | SURRENDER -> FINISHED                |
                                                v
@@ -336,7 +343,7 @@ START_GAME
 
 BONUS_PLACEMENT
   -> PLACE_BONUS_SHIELD
-  -> CHECK_LINE_REWARD
+  -> CHECK_LINE_OBJECTIVES
   -> CHECK_BOARD_COMPLETE
   -> ADVANCE_OR_FINISH 또는 FINISHED
 ```
@@ -435,7 +442,7 @@ interface DiceRng {
 - 상대에게는 `상대가 타짜 선택 중`이라는 단계만 보내고, 선택이 끝난 눈만 공개한다.
 - 서버 내부 오류와 스택 트레이스를 클라이언트에 보내지 않는다.
 - 계산된 합법 행동 목록을 현재 플레이어 뷰에 포함해 UI 하이라이트에 사용할 수 있다.
-- 보상 라인, 양쪽 진행도에서 파생되는 보드 주사위 수, 획득 플레이어와 아이템은 양쪽에 동일하게 공개한다.
+- 보상 라인, 양쪽의 주사위 수·라인 점수 진행도, 두 목표의 획득 플레이어와 아이템은 양쪽에 동일하게 공개한다.
 
 예시 합법 행동 뷰는 다음과 같다.
 

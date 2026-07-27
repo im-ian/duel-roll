@@ -5,6 +5,7 @@ import {
   LANE_CAPACITY,
   LANE_COUNT,
   LINE_REWARD_THRESHOLD,
+  LINE_SCORE_REWARD_THRESHOLD,
   STARTING_ITEM_COUNT,
   STARTING_ITEM_TYPES,
 } from "./constants";
@@ -17,6 +18,7 @@ import {
   laneIndexes,
   opponentOf,
   scoreBoard,
+  scoreLane,
 } from "./scoring";
 import type {
   Board,
@@ -207,22 +209,21 @@ function consumeItem(
   state.itemUsedThisTurn = true;
 }
 
-function claimLineReward(
+function claimRandomItemReward(
   state: GameState,
+  reward: {
+    claimedByPlayerId: PlayerId | null;
+    itemType: ItemType | null;
+  },
   possibleClaimants: readonly PlayerId[],
   context: EngineContext,
-  events: GameEvent[],
-): void {
-  const reward = state.lineReward;
-  if (reward.claimedByPlayerId !== null) return;
-
+): { playerId: PlayerId; itemType: ItemType } | null {
+  if (reward.claimedByPlayerId !== null) return null;
   const possibleClaimantSet = new Set(possibleClaimants);
-  const eligibleClaimants = state.players.filter(
-    (playerId) =>
-      possibleClaimantSet.has(playerId) &&
-      boardOf(state, playerId)[reward.lane].length >= reward.threshold,
+  const eligibleClaimants = state.players.filter((playerId) =>
+    possibleClaimantSet.has(playerId),
   );
-  if (eligibleClaimants.length === 0) return;
+  if (eligibleClaimants.length === 0) return null;
 
   const playerId = eligibleClaimants.length === 1
     ? eligibleClaimants[0]
@@ -241,13 +242,76 @@ function claimLineReward(
   inventoryOf(state, playerId)[itemType] += 1;
   reward.claimedByPlayerId = playerId;
   reward.itemType = itemType;
+  return { playerId, itemType };
+}
+
+function claimLineReward(
+  state: GameState,
+  possibleClaimants: readonly PlayerId[],
+  context: EngineContext,
+  events: GameEvent[],
+): void {
+  const reward = state.lineReward;
+  const possibleClaimantSet = new Set(possibleClaimants);
+  const claim = claimRandomItemReward(
+    state,
+    reward,
+    state.players.filter(
+      (playerId) =>
+        possibleClaimantSet.has(playerId) &&
+        boardOf(state, playerId)[reward.lane].length >= reward.threshold,
+    ),
+    context,
+  );
+  if (!claim) return;
+
   events.push({
     type: "LINE_REWARD_CLAIMED",
-    playerId,
+    playerId: claim.playerId,
     lane: reward.lane,
     threshold: reward.threshold,
-    itemType,
+    itemType: claim.itemType,
   });
+}
+
+function claimLineScoreReward(
+  state: GameState,
+  possibleClaimants: readonly PlayerId[],
+  context: EngineContext,
+  events: GameEvent[],
+): void {
+  const reward = state.lineScoreReward;
+  const lane = state.lineReward.lane;
+  const possibleClaimantSet = new Set(possibleClaimants);
+  const claim = claimRandomItemReward(
+    state,
+    reward,
+    state.players.filter(
+      (playerId) =>
+        possibleClaimantSet.has(playerId) &&
+        scoreLane(boardOf(state, playerId)[lane]) >= reward.threshold,
+    ),
+    context,
+  );
+  if (!claim) return;
+
+  events.push({
+    type: "LINE_SCORE_REWARD_CLAIMED",
+    playerId: claim.playerId,
+    lane,
+    threshold: reward.threshold,
+    itemType: claim.itemType,
+  });
+}
+
+function claimLineObjectives(
+  state: GameState,
+  possibleClaimants: readonly PlayerId[],
+  context: EngineContext,
+  events: GameEvent[],
+): void {
+  claimLineReward(state, possibleClaimants, context, events);
+  claimLineScoreReward(state, possibleClaimants, context, events);
 }
 
 function finishNormally(state: GameState, events: GameEvent[]): void {
@@ -325,7 +389,7 @@ export function createGame(
     "No lane is available for the line reward.",
   );
   const state: GameState = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     gameId: context.ids.next("game"),
     version: 0,
     players,
@@ -350,6 +414,11 @@ export function createGame(
     lineReward: {
       lane: rewardLane,
       threshold: LINE_REWARD_THRESHOLD,
+      claimedByPlayerId: null,
+      itemType: null,
+    },
+    lineScoreReward: {
+      threshold: LINE_SCORE_REWARD_THRESHOLD,
       claimedByPlayerId: null,
       itemType: null,
     },
@@ -424,7 +493,7 @@ export function applyCommand(
         die,
       });
       if (command.lane === state.lineReward.lane) {
-        claimLineReward(state, [actorPlayerId], context, events);
+        claimLineObjectives(state, [actorPlayerId], context, events);
       }
       advanceOrFinish(state, actorPlayerId, context, events);
       break;
@@ -574,6 +643,14 @@ export function applyCommand(
         ownDie,
         opponentDie,
       });
+      if (command.lane === state.lineReward.lane) {
+        claimLineScoreReward(
+          state,
+          [actorPlayerId, opponentPlayerId],
+          context,
+          events,
+        );
+      }
       break;
     }
 
@@ -623,6 +700,14 @@ export function applyCommand(
         previousDie: target,
         die: rerolledDie,
       });
+      if (command.lane === state.lineReward.lane) {
+        claimLineScoreReward(
+          state,
+          [command.boardOwnerPlayerId],
+          context,
+          events,
+        );
+      }
       break;
     }
 
@@ -663,7 +748,7 @@ export function applyCommand(
         playerId: actorPlayerId,
         placements,
       });
-      claimLineReward(
+      claimLineObjectives(
         state,
         placements
           .filter(({ lane }) => lane === state.lineReward.lane)
@@ -832,7 +917,7 @@ export function applyCommand(
         die,
       });
       if (command.lane === state.lineReward.lane) {
-        claimLineReward(
+        claimLineObjectives(
           state,
           [command.boardOwnerPlayerId],
           context,
@@ -994,7 +1079,7 @@ export function assertGameInvariants(state: GameState): void {
     throw new RuleError("INVARIANT_VIOLATION", message);
   };
 
-  if (state.schemaVersion !== 5) {
+  if (state.schemaVersion !== 6) {
     fail("Unsupported game state schema version.");
   }
   if (state.players.length !== 2 || state.players[0] === state.players[1]) {
@@ -1068,6 +1153,35 @@ export function assertGameInvariants(state: GameState): void {
     !ITEM_TYPES.includes(lineReward.itemType)
   ) {
     fail("Line reward item must belong to the item catalog.");
+  }
+
+  const lineScoreReward = state.lineScoreReward;
+  invariant(
+    lineScoreReward,
+    "Game must contain a line score reward objective.",
+  );
+  if (lineScoreReward.threshold !== LINE_SCORE_REWARD_THRESHOLD) {
+    fail(
+      `Line score reward threshold must be ${LINE_SCORE_REWARD_THRESHOLD}.`,
+    );
+  }
+  const hasScoreRewardClaimant =
+    lineScoreReward.claimedByPlayerId !== null;
+  const hasScoreRewardItem = lineScoreReward.itemType !== null;
+  if (hasScoreRewardClaimant !== hasScoreRewardItem) {
+    fail("Line score reward claimant and item must be recorded together.");
+  }
+  if (
+    lineScoreReward.claimedByPlayerId !== null &&
+    !state.players.includes(lineScoreReward.claimedByPlayerId)
+  ) {
+    fail("Line score reward claimant must belong to the game.");
+  }
+  if (
+    lineScoreReward.itemType !== null &&
+    !ITEM_TYPES.includes(lineScoreReward.itemType)
+  ) {
+    fail("Line score reward item must belong to the item catalog.");
   }
 
   if (state.pending?.source === "TURN") {

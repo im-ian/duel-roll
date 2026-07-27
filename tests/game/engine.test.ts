@@ -78,6 +78,11 @@ describe("game engine", () => {
       claimedByPlayerId: null,
       itemType: null,
     });
+    expect(transition.state.lineScoreReward).toEqual({
+      threshold: 15,
+      claimedByPlayerId: null,
+      itemType: null,
+    });
     expect(transition.events.map((event) => event.type)).toEqual([
       "GAME_STARTED",
       "TURN_STARTED",
@@ -166,6 +171,173 @@ describe("game engine", () => {
     expect(
       placedElsewhere.events.some(
         (event) => event.type === "LINE_REWARD_CLAIMED",
+      ),
+    ).toBe(false);
+  });
+
+  it("awards a random item to the first player reaching 15 points in the reward lane", () => {
+    const state = activeState({
+      pendingFace: 5,
+      boards: {
+        A: board([], [die("a-1", 5)], []),
+        B: board([], [die("b-1", 5, "NORMAL", "B")], []),
+      },
+      lineReward: {
+        lane: 1,
+        threshold: 3,
+        claimedByPlayerId: null,
+        itemType: null,
+      },
+      lineScoreReward: {
+        threshold: 15,
+        claimedByPlayerId: null,
+        itemType: null,
+      },
+    });
+    const awarded = applyCommand(
+      state,
+      "A",
+      { type: "PLACE_OWN", lane: 1 },
+      context({ rolls: [2], indexes: [5] }),
+    );
+
+    expect(awarded.state.boards.A?.[1]).toHaveLength(2);
+    expect(awarded.state.lineReward.claimedByPlayerId).toBeNull();
+    expect(awarded.state.lineScoreReward).toEqual({
+      threshold: 15,
+      claimedByPlayerId: "A",
+      itemType: "TURN_REROLL",
+    });
+    expect(awarded.state.inventory.A?.TURN_REROLL).toBe(1);
+    expect(awarded.events.map((event) => event.type)).toEqual([
+      "DIE_PLACED",
+      "LINE_SCORE_REWARD_CLAIMED",
+      "TURN_STARTED",
+      "DIE_ROLLED",
+    ]);
+    expect(awarded.events[1]).toEqual({
+      type: "LINE_SCORE_REWARD_CLAIMED",
+      playerId: "A",
+      lane: 1,
+      threshold: 15,
+      itemType: "TURN_REROLL",
+    });
+  });
+
+  it("awards the 15-point objective only once per game", () => {
+    const state = activeState({
+      pendingFace: 5,
+      boards: {
+        A: board([], [die("a-1", 5)], []),
+        B: board([], [die("b-1", 5, "NORMAL", "B")], []),
+      },
+      lineReward: {
+        lane: 1,
+        threshold: 3,
+        claimedByPlayerId: null,
+        itemType: null,
+      },
+      lineScoreReward: {
+        threshold: 15,
+        claimedByPlayerId: "B",
+        itemType: "REROLL",
+      },
+    });
+    const afterSecondPlayerReachesFifteen = applyCommand(
+      state,
+      "A",
+      { type: "PLACE_OWN", lane: 1 },
+      context({ rolls: [2] }),
+    );
+
+    expect(afterSecondPlayerReachesFifteen.state.lineScoreReward).toEqual(
+      state.lineScoreReward,
+    );
+    expect(afterSecondPlayerReachesFifteen.state.inventory.A).toEqual(
+      state.inventory.A,
+    );
+    expect(
+      afterSecondPlayerReachesFifteen.events.some(
+        (event) => event.type === "LINE_SCORE_REWARD_CLAIMED",
+      ),
+    ).toBe(false);
+  });
+
+  it("can award the three-dice and 15-point objectives from the same placement", () => {
+    const state = activeState({
+      pendingFace: 4,
+      boards: {
+        A: board([die("a-1", 4), die("a-2", 4)], [], []),
+        B: board([], [], []),
+      },
+      lineReward: {
+        lane: 0,
+        threshold: 3,
+        claimedByPlayerId: null,
+        itemType: null,
+      },
+      lineScoreReward: {
+        threshold: 15,
+        claimedByPlayerId: null,
+        itemType: null,
+      },
+    });
+    const awarded = applyCommand(
+      state,
+      "A",
+      { type: "PLACE_OWN", lane: 0 },
+      context({ rolls: [2], indexes: [0, 1] }),
+    );
+
+    expect(awarded.state.lineReward).toMatchObject({
+      claimedByPlayerId: "A",
+      itemType: "SWAP",
+    });
+    expect(awarded.state.lineScoreReward).toMatchObject({
+      claimedByPlayerId: "A",
+      itemType: "REROLL",
+    });
+    expect(awarded.state.inventory.A?.SWAP).toBe(2);
+    expect(awarded.state.inventory.A?.REROLL).toBe(2);
+    expect(awarded.events.map((event) => event.type)).toEqual([
+      "DIE_PLACED",
+      "LINE_REWARD_CLAIMED",
+      "LINE_SCORE_REWARD_CLAIMED",
+      "TURN_STARTED",
+      "DIE_ROLLED",
+    ]);
+  });
+
+  it("does not award the 15-point objective below the threshold or outside the reward lane", () => {
+    const state = activeState({
+      pendingFace: 5,
+      boards: {
+        A: board([die("a-off-target", 5)], [die("a-target", 4)], []),
+        B: board([], [], []),
+      },
+      lineReward: {
+        lane: 1,
+        threshold: 3,
+        claimedByPlayerId: "B",
+        itemType: "SHIELD",
+      },
+      lineScoreReward: {
+        threshold: 15,
+        claimedByPlayerId: null,
+        itemType: null,
+      },
+    });
+    const placedOutside = applyCommand(
+      state,
+      "A",
+      { type: "PLACE_OWN", lane: 0 },
+      context({ rolls: [2] }),
+    );
+
+    expect(placedOutside.state.lineScoreReward.claimedByPlayerId).toBeNull();
+    expect(
+      placedOutside.events.some(
+        (event) => event.type === "LINE_SCORE_REWARD_CLAIMED",
       ),
     ).toBe(false);
   });
@@ -417,6 +589,57 @@ describe("game engine", () => {
     });
   });
 
+  it("awards the board owner when a bonus shield reaches 15 points", () => {
+    const state = activeState({
+      pendingFace: 6,
+      boards: {
+        A: board([], [], []),
+        B: board(
+          [die("attack-target", 6, "NORMAL", "B")],
+          [die("score-1", 5, "NORMAL", "B")],
+          [],
+        ),
+      },
+      lineReward: {
+        lane: 1,
+        threshold: 3,
+        claimedByPlayerId: "A",
+        itemType: "SHIELD",
+      },
+      lineScoreReward: {
+        threshold: 15,
+        claimedByPlayerId: null,
+        itemType: null,
+      },
+    });
+    const engineContext = context({ rolls: [5, 2], indexes: [7] });
+    const attacked = applyCommand(
+      state,
+      "A",
+      { type: "ALKKAGI", lane: 0 },
+      engineContext,
+    );
+    const awarded = applyCommand(
+      attacked.state,
+      "A",
+      { type: "PLACE_BONUS_SHIELD", boardOwnerPlayerId: "B", lane: 1 },
+      engineContext,
+    );
+
+    expect(awarded.state.lineScoreReward).toMatchObject({
+      claimedByPlayerId: "B",
+      itemType: "EVEN",
+    });
+    expect(awarded.state.inventory.B?.EVEN).toBe(2);
+    expect(awarded.events[1]).toMatchObject({
+      type: "LINE_SCORE_REWARD_CLAIMED",
+      playerId: "B",
+      lane: 1,
+      threshold: 15,
+      itemType: "EVEN",
+    });
+  });
+
   it("never makes a held player eligible again", () => {
     const state = activeState({
       held: { A: true, B: false },
@@ -577,6 +800,51 @@ describe("game engine", () => {
     ]);
   });
 
+  it("awards the 15-point objective when a swap creates the qualifying score", () => {
+    const state = activeState({
+      boards: {
+        A: board([die("own-5", 5), die("own-4", 4)], [], []),
+        B: board(
+          [die("opponent-5", 5, "NORMAL", "B"), die("opponent-1", 1, "NORMAL", "B")],
+          [],
+          [],
+        ),
+      },
+      lineReward: {
+        lane: 0,
+        threshold: 3,
+        claimedByPlayerId: "B",
+        itemType: "SHIELD",
+      },
+      lineScoreReward: {
+        threshold: 15,
+        claimedByPlayerId: null,
+        itemType: null,
+      },
+    });
+    const swapped = applyCommand(
+      state,
+      "A",
+      {
+        type: "USE_SWAP_ITEM",
+        lane: 0,
+        ownDieId: "own-4",
+        opponentDieId: "opponent-5",
+      },
+      context({ indexes: [5] }),
+    );
+
+    expect(swapped.state.lineScoreReward).toMatchObject({
+      claimedByPlayerId: "A",
+      itemType: "TURN_REROLL",
+    });
+    expect(swapped.state.inventory.A?.TURN_REROLL).toBe(1);
+    expect(swapped.events.map((event) => event.type)).toEqual([
+      "DICE_SWAPPED",
+      "LINE_SCORE_REWARD_CLAIMED",
+    ]);
+  });
+
   it("rerolls an opponent normal die while preserving its identity", () => {
     const state = activeState({
       boards: {
@@ -611,6 +879,51 @@ describe("game engine", () => {
         previousDie: { face: 4 },
         die: { id: "target", face: 6, kind: "NORMAL" },
       },
+    ]);
+  });
+
+  it("awards the board owner when a reroll creates 15 points", () => {
+    const state = activeState({
+      boards: {
+        A: board([], [], []),
+        B: board(
+          [],
+          [],
+          [die("matching", 5, "NORMAL", "B"), die("target", 4, "NORMAL", "B")],
+        ),
+      },
+      lineReward: {
+        lane: 2,
+        threshold: 3,
+        claimedByPlayerId: "A",
+        itemType: "SHIELD",
+      },
+      lineScoreReward: {
+        threshold: 15,
+        claimedByPlayerId: null,
+        itemType: null,
+      },
+    });
+    const rerolled = applyCommand(
+      state,
+      "A",
+      {
+        type: "USE_REROLL_ITEM",
+        boardOwnerPlayerId: "B",
+        lane: 2,
+        dieId: "target",
+      },
+      context({ differentRolls: [5], indexes: [5] }),
+    );
+
+    expect(rerolled.state.lineScoreReward).toMatchObject({
+      claimedByPlayerId: "B",
+      itemType: "TURN_REROLL",
+    });
+    expect(rerolled.state.inventory.B?.TURN_REROLL).toBe(1);
+    expect(rerolled.events.map((event) => event.type)).toEqual([
+      "DIE_REROLLED",
+      "LINE_SCORE_REWARD_CLAIMED",
     ]);
   });
 
@@ -848,6 +1161,37 @@ describe("game engine", () => {
     expect(dropped.events.map((event) => event.type)).toEqual([
       "DICE_DROPPED",
       "LINE_REWARD_CLAIMED",
+    ]);
+  });
+
+  it("uses server RNG to break a simultaneous 15-point drop tie", () => {
+    const state = activeState({
+      boards: {
+        A: board([die("a-5", 5)], [], []),
+        B: board([die("b-5", 5, "NORMAL", "B")], [], []),
+      },
+      lineScoreReward: {
+        threshold: 15,
+        claimedByPlayerId: null,
+        itemType: null,
+      },
+    });
+    const dropped = applyCommand(
+      state,
+      "A",
+      { type: "USE_DROP_ITEM" },
+      context({ indexes: [0, 0, 1, 0], rolls: [5, 5] }),
+    );
+
+    expect(dropped.state.lineScoreReward).toMatchObject({
+      claimedByPlayerId: "B",
+      itemType: "SWAP",
+    });
+    expect(dropped.state.inventory.A?.DROP).toBe(0);
+    expect(dropped.state.inventory.B?.SWAP).toBe(2);
+    expect(dropped.events.map((event) => event.type)).toEqual([
+      "DICE_DROPPED",
+      "LINE_SCORE_REWARD_CLAIMED",
     ]);
   });
 

@@ -29,6 +29,12 @@ export type LineReward = {
   itemType: ItemType | null;
 };
 
+export type LineScoreReward = {
+  threshold: 15;
+  claimedByPlayerId: PlayerId | null;
+  itemType: ItemType | null;
+};
+
 export type DroppedDiePlacement = {
   boardOwnerPlayerId: PlayerId;
   lane: LaneIndex;
@@ -68,7 +74,7 @@ export type GameResult = {
 };
 
 export type GameState = {
-  schemaVersion: 5;
+  schemaVersion: 6;
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
@@ -82,6 +88,7 @@ export type GameState = {
   inventory: Record<PlayerId, ItemInventory>;
   itemUsedThisTurn: boolean;
   lineReward: LineReward;
+  lineScoreReward: LineScoreReward;
   held: Record<PlayerId, boolean>;
   result: GameResult | null;
 };
@@ -205,6 +212,13 @@ export type GameEvent =
       playerId: PlayerId;
       lane: LaneIndex;
       threshold: 3;
+      itemType: ItemType;
+    }
+  | {
+      type: "LINE_SCORE_REWARD_CLAIMED";
+      playerId: PlayerId;
+      lane: LaneIndex;
+      threshold: 15;
       itemType: ItemType;
     }
   | {

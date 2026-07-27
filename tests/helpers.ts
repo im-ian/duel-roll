@@ -103,10 +103,11 @@ export function activeState(options?: {
   inventory?: GameState["inventory"];
   itemUsedThisTurn?: boolean;
   lineReward?: GameState["lineReward"];
+  lineScoreReward?: GameState["lineScoreReward"];
 }): GameState {
   const currentPlayerId = options?.currentPlayerId ?? "A";
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     gameId: "game_test",
     version: 0,
     players: ["A", "B"],
@@ -154,6 +155,11 @@ export function activeState(options?: {
     lineReward: options?.lineReward ?? {
       lane: 0,
       threshold: 3,
+      claimedByPlayerId: "A",
+      itemType: "SHIELD",
+    },
+    lineScoreReward: options?.lineScoreReward ?? {
+      threshold: 15,
       claimedByPlayerId: "A",
       itemType: "SHIELD",
     },
