@@ -19,6 +19,7 @@ import {
   ShieldIcon,
   Spinner,
 } from "./components";
+import { calculatePlacementHints } from "./placement-guide";
 import { useRoomSession } from "./use-room-session";
 import type { ConnectionState, PendingAction } from "./use-room-session";
 
@@ -33,6 +34,7 @@ type ItemMode =
   | null;
 
 const GAME_END_TRANSITION_MS = 2_000;
+const BEGINNER_GUIDE_STORAGE_KEY = "roll-duel:beginner-guide";
 const DROP_ITEM_LABEL = "무작위 투하";
 const EMPTY_INVENTORY: ItemInventory = {
   SWAP: 0,
@@ -47,6 +49,15 @@ const EMPTY_INVENTORY: ItemInventory = {
 
 function normalizeCode(value: string): string {
   return value.toUpperCase().replace(/[\s-]/g, "").slice(0, 6);
+}
+
+function initialBeginnerGuidePreference(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    return window.localStorage.getItem(BEGINNER_GUIDE_STORAGE_KEY) !== "OFF";
+  } catch {
+    return true;
+  }
 }
 
 function HomeScreen({
@@ -468,6 +479,9 @@ function GameScreen({
 }) {
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [itemMode, setItemMode] = useState<ItemMode>(null);
+  const [beginnerGuideEnabled, setBeginnerGuideEnabled] = useState(
+    initialBeginnerGuidePreference,
+  );
   const currentDie = room.game ? pendingDie(room.game.state) : null;
   const currentRollKey = currentDie && room.game
     ? `${room.game.state.gameId}:${currentDie.id}:${currentDie.face}`
@@ -479,6 +493,17 @@ function GameScreen({
     setItemMode(null);
     setOverlay((current) => current === "INVENTORY" ? null : current);
   }, [gameVersion]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        BEGINNER_GUIDE_STORAGE_KEY,
+        beginnerGuideEnabled ? "ON" : "OFF",
+      );
+    } catch {
+      // The guide still works when browser storage is unavailable.
+    }
+  }, [beginnerGuideEnabled]);
 
   const game = room.game;
   if (!game) return <Spinner label="경기를 준비하는 중" />;
@@ -505,6 +530,22 @@ function GameScreen({
   const remainingItems = ITEM_TYPES.reduce(
     (total, itemType) => total + inventory[itemType],
     0,
+  );
+  const placementHints =
+    beginnerGuideEnabled &&
+    !controlsLocked &&
+    !itemMode &&
+    isMyTurn &&
+    state.phase === "TURN_ACTION" &&
+    currentDie
+      ? calculatePlacementHints(
+          ownBoard,
+          currentDie,
+          game.legalActions.ownPlacementLanes,
+        )
+      : [];
+  const placementHintsByLane = new Map(
+    placementHints.map((hint) => [hint.lane, hint]),
   );
   const swapItemStatus = state.itemUsedThisTurn
     ? "이번 턴 사용 완료"
@@ -622,6 +663,31 @@ function GameScreen({
         <div><span>{opponent?.nickname ?? "상대"}</span><strong>{opponentTotal}</strong></div>
       </section>
 
+      {!ending && (
+        <section className={`beginner-guide ${placementHints.length > 0 ? "beginner-guide--active" : ""}`}>
+          <span className="beginner-guide__icon" aria-hidden="true">◎</span>
+          <div>
+            <strong>초보 가이드</strong>
+            <small>
+              {!beginnerGuideEnabled
+                ? "착수 점수 표시를 숨겼습니다."
+                : placementHints.length > 0
+                  ? "이번 착수의 추가 점수와 추천 라인을 표시합니다."
+                  : "내 착수 차례가 되면 점수 기준 추천을 표시합니다."}
+            </small>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={beginnerGuideEnabled}
+            aria-label={`초보 가이드 ${beginnerGuideEnabled ? "끄기" : "켜기"}`}
+            onClick={() => setBeginnerGuideEnabled((enabled) => !enabled)}
+          >
+            {beginnerGuideEnabled ? "ON" : "OFF"}
+          </button>
+        </section>
+      )}
+
       <section className="lanes-grid">
         {([0, 1, 2] as LaneIndex[]).map((lane) => {
           const canPlace = game.legalActions.ownPlacementLanes.includes(lane);
@@ -725,6 +791,7 @@ function GameScreen({
               ownDice={ownBoard[lane]}
               opponentScore={opponentScores[lane]}
               ownScore={ownScores[lane]}
+              placementHint={placementHintsByLane.get(lane)}
               disabled={controlsLocked}
               opponentSelectableDieIds={opponentSelectableDieIds}
               ownSelectableDieIds={ownSelectableDieIds}

@@ -167,6 +167,7 @@ type TargetRowProps = {
   selectableDieIds?: ReadonlySet<string>;
   selectedDieId?: string;
   onDieClick?: (die: Die) => void;
+  placementHint?: { scoreGain: number; isRecommended: boolean };
 };
 
 export function TargetRow({
@@ -180,6 +181,7 @@ export function TargetRow({
   selectableDieIds,
   selectedDieId,
   onDieClick,
+  placementHint,
 }: TargetRowProps) {
   const contents = (
     <>
@@ -192,6 +194,11 @@ export function TargetRow({
         onDieClick={onDieClick}
       />
       <span className="target-row__score">{score}</span>
+      {placementHint && (
+        <span className="target-row__guide">
+          +{placementHint.scoreGain}점
+        </span>
+      )}
       {action && <span className="target-row__action">{action}</span>}
     </>
   );
@@ -199,10 +206,12 @@ export function TargetRow({
     return (
       <button
         type="button"
-        className={`target-row target-row--${tone ?? "place"}`}
+        className={`target-row target-row--${tone ?? "place"} ${
+          placementHint ? "target-row--guided" : ""
+        } ${placementHint?.isRecommended ? "target-row--recommended" : ""}`}
         disabled={disabled}
         onClick={onClick}
-        aria-label={`${label} 라인 ${action}`}
+        aria-label={`${label} 라인 ${action}${placementHint ? `, 배치 시 ${placementHint.scoreGain}점 증가${placementHint.isRecommended ? ", 추천" : ""}` : ""}`}
       >
         {contents}
       </button>
@@ -225,6 +234,7 @@ export function LaneCard({
   selectedDieId,
   onOpponentDieClick,
   onOwnDieClick,
+  placementHint,
 }: {
   lane: LaneIndex;
   opponentDice: Die[];
@@ -239,6 +249,7 @@ export function LaneCard({
   selectedDieId?: string;
   onOpponentDieClick?: (die: Die) => void;
   onOwnDieClick?: (die: Die) => void;
+  placementHint?: { scoreGain: number; isRecommended: boolean };
 }) {
   const difference = ownScore - opponentScore;
   const verdict =
@@ -248,9 +259,15 @@ export function LaneCard({
         ? `상대가 +${Math.abs(difference)}`
         : "동률";
   return (
-    <section className="lane-card" aria-label={`${lane + 1}번 라인`}>
+    <section
+      className={`lane-card ${placementHint?.isRecommended ? "lane-card--recommended" : ""}`}
+      aria-label={`${lane + 1}번 라인${placementHint?.isRecommended ? ", 초보 가이드 추천" : ""}`}
+    >
       <header className="lane-card__header">
-        <span>LINE 0{lane + 1}</span>
+        <span>
+          LINE 0{lane + 1}
+          {placementHint?.isRecommended && <b>추천</b>}
+        </span>
         <span className={difference > 0 ? "ahead" : difference < 0 ? "behind" : ""}>
           {verdict}
         </span>
@@ -278,6 +295,7 @@ export function LaneCard({
         selectableDieIds={ownSelectableDieIds}
         selectedDieId={selectedDieId}
         onDieClick={onOwnDieClick}
+        placementHint={placementHint}
       />
     </section>
   );

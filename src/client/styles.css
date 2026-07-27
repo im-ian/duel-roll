@@ -214,10 +214,22 @@ button:disabled { cursor: not-allowed; opacity: 0.46; }
 .score-ribbon > p { display: grid; gap: 2px; margin: 0; padding: 7px 12px; background: var(--coral); color: var(--ink); font-size: .73rem; font-weight: 900; text-align: center; transform: skew(-6deg); }
 .score-ribbon--mine > p { background: var(--acid); }
 .score-ribbon > p small { font: 700 .52rem ui-monospace, monospace; }
+.beginner-guide { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; margin: -2px 0 10px; border: 1px solid var(--line); padding: 8px 9px; background: rgba(255,255,255,.28); }
+.beginner-guide--active { border-color: rgba(90,67,220,.42); background: rgba(158,128,255,.1); }
+.beginner-guide__icon { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--ink); border-radius: 50%; background: var(--paper-2); font-weight: 900; }
+.beginner-guide--active .beginner-guide__icon { background: var(--acid); }
+.beginner-guide > div { display: grid; gap: 2px; min-width: 0; }
+.beginner-guide strong { font-size: .69rem; }
+.beginner-guide small { overflow: hidden; color: rgba(23,26,29,.56); font-size: .59rem; text-overflow: ellipsis; white-space: nowrap; }
+.beginner-guide > button { min-width: 44px; border: 1px solid var(--ink); border-radius: 99px; padding: 5px 8px; background: var(--ink); color: var(--acid); font: 800 .58rem ui-monospace, monospace; cursor: pointer; }
+.beginner-guide > button[aria-checked="false"] { background: transparent; color: rgba(23,26,29,.55); }
 
 .lanes-grid { display: grid; gap: 8px; }
 .lane-card { overflow: hidden; border: 1.5px solid var(--ink); background: rgba(255,255,255,.38); }
+.lane-card--recommended { box-shadow: 4px 4px 0 #5a43dc; }
 .lane-card__header { display: flex; justify-content: space-between; padding: 7px 9px; border-bottom: 1px solid var(--line); font: 700 .58rem ui-monospace, monospace; letter-spacing: .05em; }
+.lane-card__header > span:first-child { display: flex; align-items: center; gap: 7px; }
+.lane-card__header b { border-radius: 99px; padding: 2px 6px; background: #5a43dc; color: white; font: 800 .52rem/1 sans-serif; letter-spacing: 0; }
 .lane-card__header span:last-child { color: rgba(23,26,29,.5); letter-spacing: 0; }
 .lane-card__header .ahead { color: #2b7d5b !important; }
 .lane-card__header .behind { color: #b54437 !important; }
@@ -242,7 +254,11 @@ button.target-row:not(:disabled)::after { content: ""; position: absolute; inset
 .target-row--bonus { background: rgba(85,220,226,.2); color: #167279; }
 .target-row__label { color: rgba(23,26,29,.57); font-size: .66rem; font-weight: 700; }
 .target-row__score { font: 800 .86rem ui-monospace, monospace; text-align: right; }
+.target-row__guide { position: absolute; top: 3px; right: 39px; border: 1px solid rgba(90,67,220,.35); border-radius: 99px; padding: 2px 5px; background: #eee9ff; color: #4c38bd; font: 850 .54rem ui-monospace, monospace; }
 .target-row__action { position: absolute; right: 39px; top: 50%; border-radius: 2px; padding: 3px 5px; background: currentColor; color: var(--paper); font-size: .54rem; font-weight: 800; transform: translateY(-50%); }
+.target-row--guided .target-row__action { top: auto; bottom: 3px; transform: none; }
+.target-row--recommended { background: rgba(217,255,67,.42); }
+button.target-row--recommended:not(:disabled)::after { border-width: 3px; border-color: #5a43dc; }
 .target-row--place .target-row__action { color: var(--ink); background: var(--acid); }
 .target-row--attack .target-row__action { color: var(--paper); background: #b54437; }
 .target-row--bonus .target-row__action { color: var(--ink); background: var(--cyan); }
@@ -481,6 +497,7 @@ button.target-row:not(:disabled)::after { content: ""; position: absolute; inset
   .target-row__label { align-self: start; }
   .dice-row { grid-column: 1 / -1; justify-content: center; }
   .target-row__score { position: absolute; right: 10px; top: 10px; }
+  .target-row__guide { top: 9px; right: 35px; }
   .target-row__action { right: 8px; bottom: 8px; top: auto; transform: none; }
   .die, .die-slot { width: 42px; height: 42px; }
 }
