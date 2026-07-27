@@ -1,7 +1,7 @@
 # 방 코드 PVP 아키텍처
 
 - 상태: 현재 구현 기준선
-- 문서 버전: 0.9
+- 문서 버전: 1.0
 - 최종 검토: 2026-07-27
 
 이 문서는 [게임 규칙 명세](./game-rules.md)를 서버 권위의 2인 실시간 웹 게임으로 구현하기 위한 논리 아키텍처와 데이터 계약을 정의한다. 특정 프레임워크를 고르기 전에도 규칙 엔진, 네트워크, 저장소, UI의 책임이 섞이지 않게 하는 것이 목적이다.
@@ -191,6 +191,8 @@ WAITING_FOR_OPPONENT
 
 로비의 `SET_READY`와 종료 뒤의 `REMATCH`는 게임 규칙 명령과 분리하고 `roomVersion`을 사용한다.
 
+아이템 명령은 `ITEM_TURN_BEHAVIOR`를 공통 기준으로 사용한다. `SWAP`, `REROLL`, `DROP`, `DESTROY`는 효과와 미션 보상을 확정한 뒤 현재 주사위를 `DIE_SPENT(reason: ITEM, itemType)`으로 기록하고 턴을 끝낸다. `SHIELD`, `TURN_REROLL`, `ODD`, `EVEN`은 pending 주사위를 갱신하거나 유지한 채 `TURN_ACTION`을 계속한다.
+
 ### 서버 메시지
 
 | 메시지 | 역할 |
@@ -224,6 +226,18 @@ type ItemType =
   | "TURN_REROLL"
   | DieParity;
 type ItemInventory = Record<ItemType, number>;
+type ItemTurnBehavior = "CONTINUE" | "END";
+
+const ITEM_TURN_BEHAVIOR: Record<ItemType, ItemTurnBehavior> = {
+  SWAP: "END",
+  REROLL: "END",
+  SHIELD: "CONTINUE",
+  DROP: "END",
+  DESTROY: "END",
+  TURN_REROLL: "CONTINUE",
+  ODD: "CONTINUE",
+  EVEN: "CONTINUE",
+};
 
 type Die = {
   id: string;
@@ -297,7 +311,7 @@ type GameState = {
 
 `lineMission`은 경기 생성 때 정한 공개 라인과 해당 경기에서 유일한 미션 종류를 함께 저장한다. `PLACEMENT_COUNT`의 기준은 3개 이상, `SCORE_OVER`의 기준은 15점 초과다. `rewardItems`는 두 플레이어 키를 모두 가지며 미달성은 `null`, 달성은 실제 지급한 `ItemType`을 기록한다. 한 플레이어가 달성해도 상대 값은 그대로 유지하며, 이후 개수나 점수가 기준 아래로 내려가도 기록을 보존해 중복 지급을 막는다.
 
-`finalTurnPlayerId`는 어느 보드든 15칸을 처음 완성했을 때 경기의 후공으로 확정한다. 이 값은 이후 파괴·알까기로 보드가 다시 14칸 이하가 되어도 유지하며, 후공이 턴을 끝내면 `FINISHED` 전환과 함께 `null`로 되돌린다. 무작위 투하처럼 턴을 끝내지 않는 명령이 15칸을 만들 수 있으므로 현재 보드만 다시 계산해서는 이 예약 상태를 대체할 수 없다.
+`finalTurnPlayerId`는 어느 보드든 15칸을 처음 완성했을 때 경기의 후공으로 확정한다. 이 값은 이후 파괴·알까기로 보드가 다시 14칸 이하가 되어도 유지하며, 후공이 턴을 끝내면 `FINISHED` 전환과 함께 `null`로 되돌린다. 마지막 후공 턴에는 보드가 다시 기준 아래로 내려갈 수 있으므로 현재 보드만 다시 계산해서는 이 예약 상태를 대체할 수 없다.
 
 다음 값은 `GameState`에 저장하지 않거나 파생 값으로만 제공한다.
 
@@ -319,13 +333,13 @@ START_GAME
        | PLACE_OWN -> CHECK_LINE_MISSION ----+
        | ALKKAGI -> ROLL_BONUS -> BONUS_PLACEMENT
        | USE_TAZZA -> TAZZA_CHOICE -> TURN_ACTION
-       | USE_SWAP_ITEM -> CHECK_LINE_MISSION -> TURN_ACTION
-       | USE_REROLL_ITEM -> CHECK_LINE_MISSION -> TURN_ACTION
+       | USE_SWAP_ITEM -> CHECK_LINE_MISSION -> SPEND_TURN_DIE --+
+       | USE_REROLL_ITEM -> CHECK_LINE_MISSION -> SPEND_TURN_DIE-+
        | USE_SHIELD_ITEM --------------------> TURN_ACTION
-       | USE_DESTROY_ITEM -------------------> TURN_ACTION
+       | USE_DESTROY_ITEM -> SPEND_TURN_DIE ---------------------+
        | USE_TURN_REROLL_ITEM ---------------> TURN_ACTION
        | USE_PARITY_ITEM --------------------> TURN_ACTION
-       | USE_DROP_ITEM -> CHECK_LINE_MISSION -> MARK_FINAL_IF_COMPLETE -> TURN_ACTION
+       | USE_DROP_ITEM -> CHECK_LINE_MISSION -> SPEND_TURN_DIE --+
        | HOLD -------------------------------+
        | SURRENDER -> FINISHED                |
                                                v
@@ -360,7 +374,7 @@ function isEligible(state: GameState, playerId: PlayerId): boolean {
 
 턴을 끝내는 배치 뒤 어느 한쪽이라도 15개를 채웠는지 먼저 검사한다. 처음 완성됐다면 `firstPlayerId`의 상대를 `finalTurnPlayerId`로 기록한다. 방금 행동한 플레이어가 후공이면 즉시 결과를 계산하고, 선공이면 보드가 이미 가득 찼더라도 후공에게 마지막 주사위를 굴린다. 후공이 이미 홀드했다면 추가 턴 없이 종료한다.
 
-무작위 투하는 턴을 끝내지 않으므로 완성 여부와 종료 예약만 기록하고 현재 플레이어·pending 주사위를 유지한다. 예약 이후 보드가 다시 기준 아래로 내려가도 후공의 턴 종료 시 결과를 확정한다. 예약이 없을 때만 기존 `isEligible` 순서로 다음 플레이어를 찾는다.
+보드 개입 아이템은 효과와 미션 보상을 먼저 확정하고 pending 주사위를 소비한 뒤 같은 `ADVANCE_OR_FINISH` 경로를 사용한다. 무작위 투하가 15칸을 만들면 이 경로에서 종료를 예약하며, 선공 사용 뒤에는 후공 마지막 턴을 시작하고 후공 사용 뒤에는 즉시 결과를 확정한다. 예약 이후 보드가 다시 기준 아래로 내려가도 후공의 턴 종료 시 결과를 확정한다. 예약이 없을 때만 기존 `isEligible` 순서로 다음 플레이어를 찾는다.
 
 ## 9. 순수 규칙 엔진 계약
 
@@ -596,7 +610,7 @@ interface DiceRng {
 - 저장된 점수와 보드 재계산 점수가 다를 수 없다.
 - 활성 상태의 15칸 보드는 유효한 후공 `finalTurnPlayerId`가 있을 때만 허용한다.
 - 같은 상태·명령·스크립트 RNG는 같은 전이 결과를 만든다.
-- 아이템 명령 뒤 pending 턴 주사위와 현재 플레이어는 유지되고, 같은 턴의 두 번째 아이템은 거절된다. 무작위 투하로 15칸을 완성해도 종료 예약만 추가한다.
+- `CONTINUE` 아이템 뒤에는 pending 턴 주사위와 현재 플레이어가 유지되고 같은 턴의 두 번째 아이템은 거절된다. `END` 아이템 뒤에는 효과 이벤트와 `DIE_SPENT(ITEM)`을 기록한 뒤 다음 플레이어 또는 종료 상태로 전환한다.
 
 ### 애플리케이션 통합 테스트
 

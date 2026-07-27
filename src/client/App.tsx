@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { ITEM_TYPES } from "../game/constants";
+import { ITEM_TURN_BEHAVIOR, ITEM_TYPES } from "../game/constants";
 import type {
   Board,
   Die,
@@ -57,6 +57,21 @@ const EMPTY_INVENTORY: ItemInventory = {
   ODD: 0,
   EVEN: 0,
 };
+
+function itemTurnClassName(itemType: ItemType): string {
+  return ITEM_TURN_BEHAVIOR[itemType] === "END"
+    ? "item-card--turn-end"
+    : "item-card--turn-continue";
+}
+
+function ItemTurnBadge({ itemType }: { itemType: ItemType }) {
+  const endsTurn = ITEM_TURN_BEHAVIOR[itemType] === "END";
+  return (
+    <span className={`item-card__timing item-card__timing--${endsTurn ? "end" : "continue"}`}>
+      {endsTurn ? "턴 종료" : "착수 가능"}
+    </span>
+  );
+}
 
 function normalizeCode(value: string): string {
   return value.toUpperCase().replace(/[\s-]/g, "").slice(0, 6);
@@ -283,6 +298,11 @@ function eventText(event: GameEvent, selfPlayerId: PlayerId): string {
     case "GAME_STARTED": return "새 경기가 시작됐습니다.";
     case "TURN_STARTED": return `${who(event.playerId)} 주사위를 굴렸습니다.`;
     case "DIE_PLACED": return `${who(event.playerId)} ${event.lane + 1}번 라인에 놓았습니다.`;
+    case "DIE_SPENT": return event.reason === "ITEM"
+      ? `${who(event.playerId)} ${ITEM_LABELS[event.itemType]} 사용으로 현재 주사위를 소비했습니다.`
+      : event.reason === "ALKKAGI"
+        ? `${who(event.playerId)} 공격에 현재 주사위를 사용했습니다.`
+        : `${who(event.playerId)} 현재 주사위를 포기했습니다.`;
     case "DICE_REMOVED": return `${who(event.byPlayerId)} 알까기로 ${event.dice.length}개를 제거했습니다.`;
     case "TAZZA_USED": return `${who(event.playerId)} 타짜를 사용했습니다.`;
     case "DICE_SWAPPED": return `${who(event.playerId)} ${event.lane + 1}번 라인의 주사위를 교환했습니다.`;
@@ -329,7 +349,7 @@ const TUTORIAL_STEPS = [
   {
     eyebrow: "06 · TACTICS",
     title: "특수 행동으로 흐름을 바꾸세요",
-    body: "타짜는 경기당 한 번, 아이템은 내 턴마다 한 개까지 사용할 수 있습니다. 아이템을 쓴 뒤에도 현재 주사위를 놓거나 공격할 수 있습니다.",
+    body: "타짜는 경기당 한 번, 아이템은 내 턴마다 한 개까지 사용할 수 있습니다. 현재 주사위 보조 아이템은 착수를 이어가고, 보드 개입 아이템은 현재 주사위를 소비하며 턴을 끝냅니다.",
   },
 ] as const;
 
@@ -443,7 +463,7 @@ function TutorialVisual({ step }: { step: number }) {
     <div className="tutorial-visual tutorial-tools" aria-label="타짜와 아이템 사용 규칙">
       <div><span>✦</span><strong>타짜</strong><small>경기당 1회</small></div>
       <div><span>◆</span><strong>아이템</strong><small>턴마다 1개</small></div>
-      <div><span>→</span><strong>착수</strong><small>사용 후 계속</small></div>
+      <div><span>↔</span><strong>턴 처리</strong><small>착수 또는 종료</small></div>
     </div>
   );
 }
@@ -994,11 +1014,15 @@ function GameScreen({
       {overlay === "INVENTORY" && (
         <Sheet
           title="인벤토리"
-          description="한 턴에 아이템은 하나만 사용할 수 있습니다. 사용 후에도 현재 주사위를 놓거나 공격할 수 있습니다."
+          description="한 턴에 하나만 사용할 수 있습니다. 테두리와 배지로 착수 가능 여부를 구분합니다."
           onClose={() => setOverlay(null)}
         >
+          <div className="inventory-turn-key" aria-label="아이템 턴 처리 구분">
+            <span className="inventory-turn-key__continue">사용 후 착수 가능</span>
+            <span className="inventory-turn-key__end">사용 즉시 턴 종료</span>
+          </div>
           <button
-            className="item-card"
+            className={`item-card ${itemTurnClassName("SWAP")}`}
             disabled={!game.legalActions.canUseSwapItem || controlsLocked}
             onClick={() => {
               setItemMode({ type: "SWAP" });
@@ -1007,14 +1031,14 @@ function GameScreen({
           >
             <span className="item-card__icon" aria-hidden="true">⇄</span>
             <span className="item-card__copy">
-              <strong>주사위 교환</strong>
+              <span className="item-card__title"><strong>주사위 교환</strong><ItemTurnBadge itemType="SWAP" /></span>
               <small>같은 라인에서 내 일반 주사위 1개와 상대 일반 주사위 1개를 1:1로 교환합니다.</small>
               <em>{swapItemStatus}</em>
             </span>
             <span className="item-card__count">×{inventory.SWAP}</span>
           </button>
           <button
-            className="item-card item-card--reroll"
+            className={`item-card item-card--reroll ${itemTurnClassName("REROLL")}`}
             disabled={!game.legalActions.canUseRerollItem || controlsLocked}
             onClick={() => {
               setItemMode({ type: "REROLL" });
@@ -1023,14 +1047,14 @@ function GameScreen({
           >
             <span className="item-card__icon" aria-hidden="true">↻</span>
             <span className="item-card__copy">
-              <strong>눈 변환</strong>
+              <span className="item-card__title"><strong>눈 변환</strong><ItemTurnBadge itemType="REROLL" /></span>
               <small>내 일반 주사위 또는 상대 일반 주사위 하나를 다른 무작위 눈으로 바꿉니다.</small>
               <em>{rerollItemStatus}</em>
             </span>
             <span className="item-card__count">×{inventory.REROLL}</span>
           </button>
           <button
-            className="item-card item-card--shield"
+            className={`item-card item-card--shield ${itemTurnClassName("SHIELD")}`}
             disabled={!game.legalActions.canUseShieldItem || controlsLocked}
             onClick={() => {
               if (onCommand({ type: "USE_SHIELD_ITEM" }, "현재 주사위 실드 강화 중")) {
@@ -1040,14 +1064,14 @@ function GameScreen({
           >
             <span className="item-card__icon" aria-hidden="true"><ShieldIcon /></span>
             <span className="item-card__copy">
-              <strong>실드 강화</strong>
+              <span className="item-card__title"><strong>실드 강화</strong><ItemTurnBadge itemType="SHIELD" /></span>
               <small>현재 눈을 유지한 채 주사위를 실드로 바꿉니다. 아이템과 맵 효과를 받지 않습니다.</small>
               <em>{shieldItemStatus}</em>
             </span>
             <span className="item-card__count">×{inventory.SHIELD}</span>
           </button>
           <button
-            className="item-card item-card--drop"
+            className={`item-card item-card--drop ${itemTurnClassName("DROP")}`}
             disabled={!game.legalActions.canUseDropItem || controlsLocked}
             onClick={() => {
               if (onCommand({ type: "USE_DROP_ITEM" }, `${DROP_ITEM_LABEL} 사용 중`)) {
@@ -1057,14 +1081,14 @@ function GameScreen({
           >
             <span className="item-card__icon" aria-hidden="true">✦</span>
             <span className="item-card__copy">
-              <strong>{DROP_ITEM_LABEL}</strong>
+              <span className="item-card__title"><strong>{DROP_ITEM_LABEL}</strong><ItemTurnBadge itemType="DROP" /></span>
               <small>양쪽 보드의 무작위 빈칸에 무작위 일반 주사위를 하나씩 떨어뜨립니다.</small>
               <em>{dropItemStatus}</em>
             </span>
             <span className="item-card__count">×{inventory.DROP}</span>
           </button>
           <button
-            className="item-card item-card--destroy"
+            className={`item-card item-card--destroy ${itemTurnClassName("DESTROY")}`}
             disabled={!game.legalActions.canUseDestroyItem || controlsLocked}
             onClick={() => {
               setItemMode({ type: "DESTROY" });
@@ -1073,14 +1097,14 @@ function GameScreen({
           >
             <span className="item-card__icon" aria-hidden="true">×</span>
             <span className="item-card__copy">
-              <strong>주사위 파괴</strong>
+              <span className="item-card__title"><strong>주사위 파괴</strong><ItemTurnBadge itemType="DESTROY" /></span>
               <small>내 일반 주사위 또는 상대 일반 주사위 하나를 선택해 제거합니다.</small>
               <em>{destroyItemStatus}</em>
             </span>
             <span className="item-card__count">×{inventory.DESTROY}</span>
           </button>
           <button
-            className="item-card item-card--turn-reroll"
+            className={`item-card item-card--turn-reroll ${itemTurnClassName("TURN_REROLL")}`}
             disabled={!game.legalActions.canUseTurnRerollItem || controlsLocked}
             onClick={() => {
               if (onCommand({ type: "USE_TURN_REROLL_ITEM" }, "현재 주사위 리롤 중")) {
@@ -1090,14 +1114,14 @@ function GameScreen({
           >
             <span className="item-card__icon" aria-hidden="true">⟳</span>
             <span className="item-card__copy">
-              <strong>주사위 리롤</strong>
+              <span className="item-card__title"><strong>주사위 리롤</strong><ItemTurnBadge itemType="TURN_REROLL" /></span>
               <small>현재 착수할 일반 주사위를 기존 눈과 다른 무작위 눈으로 다시 굴립니다.</small>
               <em>{turnRerollItemStatus}</em>
             </span>
             <span className="item-card__count">×{inventory.TURN_REROLL}</span>
           </button>
           <button
-            className="item-card item-card--odd"
+            className={`item-card item-card--odd ${itemTurnClassName("ODD")}`}
             disabled={!game.legalActions.canUseOddItem || controlsLocked}
             onClick={() => {
               if (onCommand({ type: "USE_PARITY_ITEM", parity: "ODD" }, "현재 주사위 홀수 변경 중")) {
@@ -1107,14 +1131,14 @@ function GameScreen({
           >
             <span className="item-card__icon item-card__icon--numbers" aria-hidden="true">135</span>
             <span className="item-card__copy">
-              <strong>홀수 주사위</strong>
+              <span className="item-card__title"><strong>홀수 주사위</strong><ItemTurnBadge itemType="ODD" /></span>
               <small>현재 일반 주사위를 기존 눈과 다른 무작위 홀수 눈으로 바꿉니다.</small>
               <em>{oddItemStatus}</em>
             </span>
             <span className="item-card__count">×{inventory.ODD}</span>
           </button>
           <button
-            className="item-card item-card--even"
+            className={`item-card item-card--even ${itemTurnClassName("EVEN")}`}
             disabled={!game.legalActions.canUseEvenItem || controlsLocked}
             onClick={() => {
               if (onCommand({ type: "USE_PARITY_ITEM", parity: "EVEN" }, "현재 주사위 짝수 변경 중")) {
@@ -1124,7 +1148,7 @@ function GameScreen({
           >
             <span className="item-card__icon item-card__icon--numbers" aria-hidden="true">246</span>
             <span className="item-card__copy">
-              <strong>짝수 주사위</strong>
+              <span className="item-card__title"><strong>짝수 주사위</strong><ItemTurnBadge itemType="EVEN" /></span>
               <small>현재 일반 주사위를 기존 눈과 다른 무작위 짝수 눈으로 바꿉니다.</small>
               <em>{evenItemStatus}</em>
             </span>

@@ -23,6 +23,17 @@ export const ITEM_TYPES = [
   "EVEN",
 ] as const satisfies readonly ItemType[];
 
+export const ITEM_TURN_BEHAVIOR = {
+  SWAP: "END",
+  REROLL: "END",
+  SHIELD: "CONTINUE",
+  DROP: "END",
+  DESTROY: "END",
+  TURN_REROLL: "CONTINUE",
+  ODD: "CONTINUE",
+  EVEN: "CONTINUE",
+} as const satisfies Record<ItemType, "CONTINUE" | "END">;
+
 // The item catalog and starting grants are intentionally separate so future
 // rewards and loadouts do not implicitly grant every newly added item.
 export const STARTING_ITEM_TYPES = [

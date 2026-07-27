@@ -1,6 +1,7 @@
 import { RuleError } from "./errors";
 import {
   BOARD_CAPACITY,
+  ITEM_TURN_BEHAVIOR,
   ITEM_TYPES,
   LANE_CAPACITY,
   LANE_COUNT,
@@ -318,6 +319,29 @@ function activeTurnDie(state: GameState): Die {
   return state.pending.original;
 }
 
+function endTurnAfterItem(
+  state: GameState,
+  actorPlayerId: PlayerId,
+  itemType: ItemType,
+  context: EngineContext,
+  events: GameEvent[],
+): void {
+  invariant(
+    ITEM_TURN_BEHAVIOR[itemType] === "END",
+    `${itemType} must be configured as a turn-ending item.`,
+  );
+  const die = activeTurnDie(state);
+  events.push({
+    type: "DIE_SPENT",
+    playerId: actorPlayerId,
+    die,
+    reason: "ITEM",
+    itemType,
+  });
+  state.pending = null;
+  advanceOrFinish(state, actorPlayerId, context, events);
+}
+
 export function createGame(
   players: [PlayerId, PlayerId],
   context: EngineContext,
@@ -623,6 +647,7 @@ export function applyCommand(
           events,
         );
       }
+      endTurnAfterItem(state, actorPlayerId, "SWAP", context, events);
       break;
     }
 
@@ -683,6 +708,7 @@ export function applyCommand(
           events,
         );
       }
+      endTurnAfterItem(state, actorPlayerId, "REROLL", context, events);
       break;
     }
 
@@ -731,7 +757,7 @@ export function applyCommand(
         context,
         events,
       );
-      startFinalTurnIfNeeded(state);
+      endTurnAfterItem(state, actorPlayerId, "DROP", context, events);
       break;
     }
 
@@ -772,6 +798,7 @@ export function applyCommand(
         lane: command.lane,
         die: target,
       });
+      endTurnAfterItem(state, actorPlayerId, "DESTROY", context, events);
       break;
     }
 

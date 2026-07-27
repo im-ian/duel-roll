@@ -356,7 +356,13 @@ button.target-row--recommended:not(:disabled)::after { border-width: 3px; border
 .tazza-options > button:first-child { background: var(--paper-2); }
 .tazza-options > button:last-child { background: rgba(158,128,255,.18); }
 .tazza-options > button > span { font-size: .68rem; font-weight: 800; }
+.inventory-turn-key { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.inventory-turn-key > span { border: 1.5px solid; border-radius: 4px; padding: 7px 8px; font-size: .62rem; font-weight: 900; text-align: center; }
+.inventory-turn-key > .inventory-turn-key__continue { border-color: #24796d; background: rgba(42,199,179,.14); color: #176258; }
+.inventory-turn-key > .inventory-turn-key__end { border-color: #a64034; background: rgba(255,118,95,.14); color: #91352b; }
 .item-card { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 13px; width: 100%; min-height: 84px; border: 1.5px solid var(--ink); border-radius: 5px; padding: 12px; background: rgba(85,220,226,.2); color: var(--ink); text-align: left; cursor: pointer; }
+.item-card--turn-continue { border: 2px solid #24796d; box-shadow: inset 4px 0 0 #2ac7b3; }
+.item-card--turn-end { border: 2px solid #a64034; box-shadow: inset 4px 0 0 var(--coral); }
 .item-card--reroll { background: rgba(158,128,255,.18); }
 .item-card--shield { background: rgba(217,255,67,.22); }
 .item-card--drop { background: rgba(245,199,101,.2); }
@@ -375,7 +381,11 @@ button.target-row--recommended:not(:disabled)::after { border-width: 3px; border
 .item-card--even .item-card__icon { background: var(--violet); color: white; }
 .item-card__icon--numbers { font-size: .72rem; letter-spacing: .04em; }
 .item-card__copy { display: grid; gap: 5px; }
+.item-card__title { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 7px; }
 .item-card__copy strong { font-size: .88rem; }
+.item-card__timing { border: 1px solid; border-radius: 99px; padding: 2px 6px; font: 900 .52rem ui-monospace, monospace; white-space: nowrap; }
+.item-card__timing--continue { border-color: #24796d; background: rgba(42,199,179,.14); color: #176258; }
+.item-card__timing--end { border-color: #a64034; background: rgba(255,118,95,.16); color: #91352b; }
 .item-card__copy small { color: rgba(23,26,29,.62); font-size: .69rem; line-height: 1.4; }
 .item-card__copy em { color: #2b6f55; font-size: .61rem; font-style: normal; font-weight: 800; }
 .item-card:disabled .item-card__copy em { color: rgba(23,26,29,.52); }

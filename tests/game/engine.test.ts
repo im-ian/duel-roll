@@ -766,7 +766,7 @@ describe("game engine", () => {
     ).toThrowError(expect.objectContaining({ code: "LANE_FULL" }));
   });
 
-  it("swaps whole dice across the same lane without ending the turn", () => {
+  it("swaps whole dice across the same lane and ends the turn", () => {
     const state = activeState({
       boards: {
         A: board([die("own", 2, "NORMAL", "A")], [], []),
@@ -783,7 +783,7 @@ describe("game engine", () => {
         ownDieId: "own",
         opponentDieId: "opponent",
       },
-      context(),
+      context({ rolls: [3] }),
     );
 
     expect(swapped.state.boards.A?.[0]).toEqual([
@@ -793,11 +793,23 @@ describe("game engine", () => {
       die("own", 2, "NORMAL", "A"),
     ]);
     expect(swapped.state.inventory.A).toEqual(inventory({ SWAP: 0 }));
-    expect(swapped.state.itemUsedThisTurn).toBe(true);
-    expect(swapped.state.currentPlayerId).toBe("A");
-    expect(swapped.state.pending).toEqual(state.pending);
+    expect(swapped.state.itemUsedThisTurn).toBe(false);
+    expect(swapped.state.currentPlayerId).toBe("B");
+    expect(swapped.state.pending).toMatchObject({
+      source: "TURN",
+      original: { face: 3, createdBy: "B" },
+    });
     expect(swapped.events).toMatchObject([
       { type: "DICE_SWAPPED", playerId: "A", lane: 0 },
+      {
+        type: "DIE_SPENT",
+        playerId: "A",
+        reason: "ITEM",
+        itemType: "SWAP",
+        die: { id: "pending" },
+      },
+      { type: "TURN_STARTED", playerId: "B" },
+      { type: "DIE_ROLLED", playerId: "B", die: { face: 3 } },
     ]);
   });
 
@@ -840,13 +852,17 @@ describe("game engine", () => {
       "own-2",
       "opponent-shield",
     ]);
-    expect(swapped.events).toMatchObject([
-      {
-        type: "DICE_SWAPPED",
-        playerId: "A",
-        ownDie: { id: "own-2" },
-        opponentDie: { id: "opponent-1" },
-      },
+    expect(swapped.events[0]).toMatchObject({
+      type: "DICE_SWAPPED",
+      playerId: "A",
+      ownDie: { id: "own-2" },
+      opponentDie: { id: "opponent-1" },
+    });
+    expect(swapped.events.map((event) => event.type)).toEqual([
+      "DICE_SWAPPED",
+      "DIE_SPENT",
+      "TURN_STARTED",
+      "DIE_ROLLED",
     ]);
   });
 
@@ -884,10 +900,13 @@ describe("game engine", () => {
     expect(swapped.events.map((event) => event.type)).toEqual([
       "DICE_SWAPPED",
       "LINE_MISSION_REWARD_CLAIMED",
+      "DIE_SPENT",
+      "TURN_STARTED",
+      "DIE_ROLLED",
     ]);
   });
 
-  it("rerolls an opponent normal die while preserving its identity", () => {
+  it("rerolls an opponent normal die, preserves its identity, and ends the turn", () => {
     const state = activeState({
       boards: {
         A: board([], [], []),
@@ -904,24 +923,32 @@ describe("game engine", () => {
         lane: 2,
         dieId: "target",
       },
-      context({ differentRolls: [6] }),
+      context({ differentRolls: [6], rolls: [2] }),
     );
 
     expect(rerolled.state.boards.B?.[2]).toEqual([
       die("target", 6, "NORMAL", "B"),
     ]);
     expect(rerolled.state.inventory.A).toEqual(inventory({ REROLL: 0 }));
-    expect(rerolled.state.itemUsedThisTurn).toBe(true);
-    expect(rerolled.state.pending).toEqual(state.pending);
-    expect(rerolled.events).toMatchObject([
-      {
-        type: "DIE_REROLLED",
-        playerId: "A",
-        boardOwnerPlayerId: "B",
-        previousDie: { face: 4 },
-        die: { id: "target", face: 6, kind: "NORMAL" },
-      },
-    ]);
+    expect(rerolled.state.itemUsedThisTurn).toBe(false);
+    expect(rerolled.state.currentPlayerId).toBe("B");
+    expect(rerolled.state.pending).toMatchObject({
+      source: "TURN",
+      original: { face: 2, createdBy: "B" },
+    });
+    expect(rerolled.events[0]).toMatchObject({
+      type: "DIE_REROLLED",
+      playerId: "A",
+      boardOwnerPlayerId: "B",
+      previousDie: { face: 4 },
+      die: { id: "target", face: 6, kind: "NORMAL" },
+    });
+    expect(rerolled.events[1]).toMatchObject({
+      type: "DIE_SPENT",
+      reason: "ITEM",
+      itemType: "REROLL",
+      die: { id: "pending" },
+    });
   });
 
   it("awards the board owner when a reroll pushes it over 15 points", () => {
@@ -958,6 +985,9 @@ describe("game engine", () => {
     expect(rerolled.events.map((event) => event.type)).toEqual([
       "DIE_REROLLED",
       "LINE_MISSION_REWARD_CLAIMED",
+      "DIE_SPENT",
+      "TURN_STARTED",
+      "DIE_ROLLED",
     ]);
   });
 
@@ -1105,7 +1135,7 @@ describe("game engine", () => {
       state,
       "A",
       { type: "USE_DROP_ITEM" },
-      context({ indexes: [6, 14], rolls: [2, 5] }),
+      context({ indexes: [6, 14], rolls: [2, 5, 4] }),
     );
 
     expect(dropped.state.boards.A?.[1]).toMatchObject([
@@ -1114,22 +1144,30 @@ describe("game engine", () => {
     expect(dropped.state.boards.B?.[2]).toMatchObject([
       { face: 5, kind: "NORMAL", createdBy: "A" },
     ]);
-    expect(dropped.state.pending).toEqual(state.pending);
+    expect(dropped.state.pending).toMatchObject({
+      source: "TURN",
+      original: { face: 4, createdBy: "B" },
+    });
     expect(dropped.state.inventory.A).toEqual(inventory({ DROP: 0 }));
-    expect(dropped.state.itemUsedThisTurn).toBe(true);
-    expect(dropped.events).toMatchObject([
-      {
-        type: "DICE_DROPPED",
-        playerId: "A",
-        placements: [
-          { boardOwnerPlayerId: "A", lane: 1, die: { face: 2 } },
-          { boardOwnerPlayerId: "B", lane: 2, die: { face: 5 } },
-        ],
-      },
+    expect(dropped.state.itemUsedThisTurn).toBe(false);
+    expect(dropped.state.currentPlayerId).toBe("B");
+    expect(dropped.events[0]).toMatchObject({
+      type: "DICE_DROPPED",
+      playerId: "A",
+      placements: [
+        { boardOwnerPlayerId: "A", lane: 1, die: { face: 2 } },
+        { boardOwnerPlayerId: "B", lane: 2, die: { face: 5 } },
+      ],
+    });
+    expect(dropped.events.map((event) => event.type)).toEqual([
+      "DICE_DROPPED",
+      "DIE_SPENT",
+      "TURN_STARTED",
+      "DIE_ROLLED",
     ]);
   });
 
-  it("keeps the drop turn active and lets the second player finish even when both boards fill", () => {
+  it("ends the first player's drop turn and gives the second player the final turn", () => {
     const state = activeState({
       boards: {
         A: board(oneLane("a-1"), oneLane("a-2"), oneLane("a-3", 4)),
@@ -1155,34 +1193,20 @@ describe("game engine", () => {
     expect(dropped.state.boards.B?.[2]).toHaveLength(5);
     expect(dropped.state).toMatchObject({
       phase: "TURN_ACTION",
-      currentPlayerId: "A",
-      finalTurnPlayerId: "B",
-      itemUsedThisTurn: true,
-    });
-    expect(dropped.state.pending).toEqual(state.pending);
-    expect(dropped.events.map((event) => event.type)).toEqual(["DICE_DROPPED"]);
-
-    const firstTurnEnded = applyCommand(
-      dropped.state,
-      "A",
-      { type: "HOLD" },
-      engineContext,
-    );
-    expect(firstTurnEnded.state).toMatchObject({
-      phase: "TURN_ACTION",
       currentPlayerId: "B",
       finalTurnPlayerId: "B",
+      itemUsedThisTurn: false,
       pending: { source: "TURN", original: { face: 4, createdBy: "B" } },
     });
-    expect(firstTurnEnded.events.map((event) => event.type)).toEqual([
+    expect(dropped.events.map((event) => event.type)).toEqual([
+      "DICE_DROPPED",
       "DIE_SPENT",
-      "PLAYER_HELD",
       "TURN_STARTED",
       "DIE_ROLLED",
     ]);
 
     const finished = applyCommand(
-      firstTurnEnded.state,
+      dropped.state,
       "B",
       { type: "HOLD" },
       engineContext,
@@ -1196,7 +1220,7 @@ describe("game engine", () => {
     ]);
   });
 
-  it("lets the second player finish the current turn when its drop fills a board", () => {
+  it("finishes immediately after the second player's turn-ending drop fills a board", () => {
     const state = activeState({
       currentPlayerId: "B",
       boards: {
@@ -1216,25 +1240,18 @@ describe("game engine", () => {
       engineContext,
     );
 
-    expect(dropped.state).toMatchObject({
-      phase: "TURN_ACTION",
-      currentPlayerId: "B",
-      finalTurnPlayerId: "B",
-      result: null,
-    });
-    expect(dropped.state.pending).toEqual(state.pending);
-
-    const finished = applyCommand(
-      dropped.state,
-      "B",
-      { type: "HOLD" },
-      engineContext,
-    );
-    expect(finished.state.phase).toBe("FINISHED");
-    expect(finished.events.at(-1)?.type).toBe("GAME_FINISHED");
+    expect(dropped.state.phase).toBe("FINISHED");
+    expect(dropped.state.pending).toBeNull();
+    expect(dropped.state.finalTurnPlayerId).toBeNull();
+    expect(dropped.state.result?.reason).toBe("NORMAL");
+    expect(dropped.events.map((event) => event.type)).toEqual([
+      "DICE_DROPPED",
+      "DIE_SPENT",
+      "GAME_FINISHED",
+    ]);
   });
 
-  it("finishes after the final turn even if destruction reopens the completed board", () => {
+  it("ends the final turn after destruction even if the completed board reopens", () => {
     const state = activeState({
       currentPlayerId: "B",
       pendingFace: 4,
@@ -1258,23 +1275,12 @@ describe("game engine", () => {
     );
 
     expect(destroyed.state.boards.A?.[2]).toHaveLength(4);
-    expect(destroyed.state).toMatchObject({
-      phase: "TURN_ACTION",
-      currentPlayerId: "B",
-      finalTurnPlayerId: "B",
-      result: null,
-    });
-
-    const finished = applyCommand(
-      destroyed.state,
-      "B",
-      { type: "PLACE_OWN", lane: 0 },
-      engineContext,
-    );
-    expect(finished.state.phase).toBe("FINISHED");
-    expect(finished.state.finalTurnPlayerId).toBeNull();
-    expect(finished.events.map((event) => event.type)).toEqual([
-      "DIE_PLACED",
+    expect(destroyed.state.phase).toBe("FINISHED");
+    expect(destroyed.state.pending).toBeNull();
+    expect(destroyed.state.finalTurnPlayerId).toBeNull();
+    expect(destroyed.events.map((event) => event.type)).toEqual([
+      "DIE_DESTROYED",
+      "DIE_SPENT",
       "GAME_FINISHED",
     ]);
   });
@@ -1303,7 +1309,7 @@ describe("game engine", () => {
       state,
       "A",
       { type: "USE_DROP_ITEM" },
-      context({ indexes: [0, 0, 1, 0], rolls: [2, 3] }),
+      context({ indexes: [0, 0, 1, 0], rolls: [2, 3, 4] }),
     );
 
     expect(dropped.state.boards.A?.[0]).toHaveLength(3);
@@ -1319,6 +1325,9 @@ describe("game engine", () => {
       "DICE_DROPPED",
       "LINE_MISSION_REWARD_CLAIMED",
       "LINE_MISSION_REWARD_CLAIMED",
+      "DIE_SPENT",
+      "TURN_STARTED",
+      "DIE_ROLLED",
     ]);
   });
 
@@ -1339,7 +1348,7 @@ describe("game engine", () => {
       state,
       "A",
       { type: "USE_DROP_ITEM" },
-      context({ indexes: [0, 0, 1, 0], rolls: [6, 6] }),
+      context({ indexes: [0, 0, 1, 0], rolls: [6, 6, 4] }),
     );
 
     expect(dropped.state.lineMission.rewardItems).toEqual({
@@ -1353,6 +1362,9 @@ describe("game engine", () => {
       "DICE_DROPPED",
       "LINE_MISSION_REWARD_CLAIMED",
       "LINE_MISSION_REWARD_CLAIMED",
+      "DIE_SPENT",
+      "TURN_STARTED",
+      "DIE_ROLLED",
     ]);
   });
 
@@ -1407,22 +1419,30 @@ describe("game engine", () => {
         lane: 0,
         dieId: "opponent-normal",
       },
-      context(),
+      context({ rolls: [4] }),
     );
     expect(destroyed.state.boards.B?.[0]).toEqual([]);
-    expect(destroyed.state.pending).toEqual(state.pending);
+    expect(destroyed.state.currentPlayerId).toBe("B");
+    expect(destroyed.state.pending).toMatchObject({
+      source: "TURN",
+      original: { face: 4, createdBy: "B" },
+    });
     expect(destroyed.state.inventory.A).toEqual(inventory({
       REROLL: 0,
       DESTROY: 0,
     }));
-    expect(destroyed.events).toMatchObject([
-      {
-        type: "DIE_DESTROYED",
-        playerId: "A",
-        boardOwnerPlayerId: "B",
-        die: { id: "opponent-normal", face: 6 },
-      },
-    ]);
+    expect(destroyed.events[0]).toMatchObject({
+      type: "DIE_DESTROYED",
+      playerId: "A",
+      boardOwnerPlayerId: "B",
+      die: { id: "opponent-normal", face: 6 },
+    });
+    expect(destroyed.events[1]).toMatchObject({
+      type: "DIE_SPENT",
+      reason: "ITEM",
+      itemType: "DESTROY",
+      die: { id: "pending" },
+    });
   });
 
   it.each([
@@ -1558,23 +1578,18 @@ describe("game engine", () => {
     expect(state.inventory.A).toEqual(inventory());
   });
 
-  it("allows placement after an item and resets the item limit on the next turn", () => {
+  it("allows placement after a continuing item and resets the item limit on the next turn", () => {
     const state = activeState({
       boards: {
         A: board([die("own", 2)], [], []),
         B: board([die("opponent", 5, "NORMAL", "B")], [], []),
       },
     });
-    const engineContext = context({ rolls: [3], differentRolls: [4] });
+    const engineContext = context({ rolls: [3] });
     const used = applyCommand(
       state,
       "A",
-      {
-        type: "USE_REROLL_ITEM",
-        boardOwnerPlayerId: "B",
-        lane: 0,
-        dieId: "opponent",
-      },
+      { type: "USE_SHIELD_ITEM" },
       engineContext,
     );
     expect(getLegalActions(used.state, "A")).toMatchObject({

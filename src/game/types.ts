@@ -150,6 +150,13 @@ export type GameEvent =
       reason: "ALKKAGI" | "HOLD";
     }
   | {
+      type: "DIE_SPENT";
+      playerId: PlayerId;
+      die: Die;
+      reason: "ITEM";
+      itemType: ItemType;
+    }
+  | {
       type: "DICE_REMOVED";
       byPlayerId: PlayerId;
       fromPlayerId: PlayerId;
