@@ -22,17 +22,13 @@ export type Die = {
 };
 export type Board = [Die[], Die[], Die[]];
 
-export type LineReward = {
+export type LineMissionKind = "PLACEMENT_COUNT" | "SCORE_OVER";
+export type LineMission = (
+  | { kind: "PLACEMENT_COUNT"; threshold: 3 }
+  | { kind: "SCORE_OVER"; threshold: 15 }
+) & {
   lane: LaneIndex;
-  threshold: 3;
-  claimedByPlayerId: PlayerId | null;
-  itemType: ItemType | null;
-};
-
-export type LineScoreReward = {
-  threshold: 15;
-  claimedByPlayerId: PlayerId | null;
-  itemType: ItemType | null;
+  rewardItems: Record<PlayerId, ItemType | null>;
 };
 
 export type DroppedDiePlacement = {
@@ -74,7 +70,7 @@ export type GameResult = {
 };
 
 export type GameState = {
-  schemaVersion: 6;
+  schemaVersion: 7;
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
@@ -87,8 +83,7 @@ export type GameState = {
   tazzaUsed: Record<PlayerId, boolean>;
   inventory: Record<PlayerId, ItemInventory>;
   itemUsedThisTurn: boolean;
-  lineReward: LineReward;
-  lineScoreReward: LineScoreReward;
+  lineMission: LineMission;
   held: Record<PlayerId, boolean>;
   result: GameResult | null;
 };
@@ -208,17 +203,11 @@ export type GameEvent =
       die: Die;
     }
   | {
-      type: "LINE_REWARD_CLAIMED";
+      type: "LINE_MISSION_REWARD_CLAIMED";
       playerId: PlayerId;
       lane: LaneIndex;
-      threshold: 3;
-      itemType: ItemType;
-    }
-  | {
-      type: "LINE_SCORE_REWARD_CLAIMED";
-      playerId: PlayerId;
-      lane: LaneIndex;
-      threshold: 15;
+      missionKind: LineMissionKind;
+      threshold: 3 | 15;
       itemType: ItemType;
     }
   | {

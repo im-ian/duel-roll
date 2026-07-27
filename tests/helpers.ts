@@ -25,7 +25,7 @@ export class ScriptedRng implements DiceRng {
     this.firstPlayer = options?.firstPlayer ?? "A";
     this.rolls = [...(options?.rolls ?? [1])];
     this.differentRolls = [...(options?.differentRolls ?? [2])];
-    this.indexes = [...(options?.indexes ?? [0])];
+    this.indexes = [...(options?.indexes ?? [0, 0])];
   }
 
   chooseFirstPlayer(players: [PlayerId, PlayerId]): PlayerId {
@@ -102,12 +102,11 @@ export function activeState(options?: {
   tazzaUsed?: Record<PlayerId, boolean>;
   inventory?: GameState["inventory"];
   itemUsedThisTurn?: boolean;
-  lineReward?: GameState["lineReward"];
-  lineScoreReward?: GameState["lineScoreReward"];
+  lineMission?: GameState["lineMission"];
 }): GameState {
   const currentPlayerId = options?.currentPlayerId ?? "A";
   return {
-    schemaVersion: 6,
+    schemaVersion: 7,
     gameId: "game_test",
     version: 0,
     players: ["A", "B"],
@@ -152,16 +151,11 @@ export function activeState(options?: {
       },
     },
     itemUsedThisTurn: options?.itemUsedThisTurn ?? false,
-    lineReward: options?.lineReward ?? {
+    lineMission: options?.lineMission ?? {
+      kind: "PLACEMENT_COUNT",
       lane: 0,
       threshold: 3,
-      claimedByPlayerId: "A",
-      itemType: "SHIELD",
-    },
-    lineScoreReward: options?.lineScoreReward ?? {
-      threshold: 15,
-      claimedByPlayerId: "A",
-      itemType: "SHIELD",
+      rewardItems: { A: "SHIELD", B: "SHIELD" },
     },
     held: options?.held ?? { A: false, B: false },
     result: null,

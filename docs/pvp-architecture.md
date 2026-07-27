@@ -1,7 +1,7 @@
 # 방 코드 PVP 아키텍처
 
 - 상태: 현재 구현 기준선
-- 문서 버전: 0.7
+- 문서 버전: 0.8
 - 최종 검토: 2026-07-27
 
 이 문서는 [게임 규칙 명세](./game-rules.md)를 서버 권위의 2인 실시간 웹 게임으로 구현하기 위한 논리 아키텍처와 데이터 계약을 정의한다. 특정 프레임워크를 고르기 전에도 규칙 엔진, 네트워크, 저장소, UI의 책임이 섞이지 않게 하는 것이 목적이다.
@@ -234,17 +234,15 @@ type Die = {
 
 type Board = [Die[], Die[], Die[]];
 
-type LineReward = {
-  lane: LaneIndex;
+type LineMission = ({
+  kind: "PLACEMENT_COUNT";
   threshold: 3;
-  claimedByPlayerId: PlayerId | null;
-  itemType: ItemType | null;
-};
-
-type LineScoreReward = {
+} | {
+  kind: "SCORE_OVER";
   threshold: 15;
-  claimedByPlayerId: PlayerId | null;
-  itemType: ItemType | null;
+}) & {
+  lane: LaneIndex;
+  rewardItems: Record<PlayerId, ItemType | null>;
 };
 
 type TurnPending =
@@ -275,7 +273,7 @@ type GameResult = {
 };
 
 type GameState = {
-  schemaVersion: 6;
+  schemaVersion: 7;
   gameId: string;
   version: number;
   players: [PlayerId, PlayerId];
@@ -288,8 +286,7 @@ type GameState = {
   tazzaUsed: Record<PlayerId, boolean>;
   inventory: Record<PlayerId, ItemInventory>;
   itemUsedThisTurn: boolean;
-  lineReward: LineReward;
-  lineScoreReward: LineScoreReward;
+  lineMission: LineMission;
   held: Record<PlayerId, boolean>;
   result: GameResult | null;
 };
@@ -297,7 +294,7 @@ type GameState = {
 
 `createdBy`와 현재 보드의 소유자를 구분한다. 내가 만든 보너스 실드를 상대 보드에 놓으면 `createdBy`는 나지만 점수는 상대에게 속한다.
 
-`lineReward`는 경기 생성 때 정한 공개 라인과 3개 선점 기록이고, `lineScoreReward`는 같은 라인의 15점 선점 기록이다. 각 객체의 `claimedByPlayerId`와 `itemType`은 보상 전에는 함께 `null`, 보상 뒤에는 함께 확정값이어야 한다. 달성 뒤 개수나 점수가 기준 아래로 내려가도 기록을 유지해 중복 지급을 막는다.
+`lineMission`은 경기 생성 때 정한 공개 라인과 해당 경기에서 유일한 미션 종류를 함께 저장한다. `PLACEMENT_COUNT`의 기준은 3개 이상, `SCORE_OVER`의 기준은 15점 초과다. `rewardItems`는 두 플레이어 키를 모두 가지며 미달성은 `null`, 달성은 실제 지급한 `ItemType`을 기록한다. 한 플레이어가 달성해도 상대 값은 그대로 유지하며, 이후 개수나 점수가 기준 아래로 내려가도 기록을 보존해 중복 지급을 막는다.
 
 다음 값은 `GameState`에 저장하지 않거나 파생 값으로만 제공한다.
 
@@ -316,16 +313,16 @@ START_GAME
   -> CHOOSE_FIRST_PLAYER
   -> ROLL_TURN_DIE
   -> TURN_ACTION
-       | PLACE_OWN -> CHECK_LINE_OBJECTIVES -+
+       | PLACE_OWN -> CHECK_LINE_MISSION ----+
        | ALKKAGI -> ROLL_BONUS -> BONUS_PLACEMENT
        | USE_TAZZA -> TAZZA_CHOICE -> TURN_ACTION
-       | USE_SWAP_ITEM -> CHECK_LINE_SCORE ---> TURN_ACTION
-       | USE_REROLL_ITEM -> CHECK_LINE_SCORE -> TURN_ACTION
+       | USE_SWAP_ITEM -> CHECK_LINE_MISSION -> TURN_ACTION
+       | USE_REROLL_ITEM -> CHECK_LINE_MISSION -> TURN_ACTION
        | USE_SHIELD_ITEM --------------------> TURN_ACTION
        | USE_DESTROY_ITEM -------------------> TURN_ACTION
        | USE_TURN_REROLL_ITEM ---------------> TURN_ACTION
        | USE_PARITY_ITEM --------------------> TURN_ACTION
-       | USE_DROP_ITEM -> CHECK_LINE_OBJECTIVES -> TURN_ACTION 또는 FINISHED
+       | USE_DROP_ITEM -> CHECK_LINE_MISSION -> TURN_ACTION 또는 FINISHED
        | HOLD -------------------------------+
        | SURRENDER -> FINISHED                |
                                                v
@@ -343,7 +340,7 @@ START_GAME
 
 BONUS_PLACEMENT
   -> PLACE_BONUS_SHIELD
-  -> CHECK_LINE_OBJECTIVES
+  -> CHECK_LINE_MISSION
   -> CHECK_BOARD_COMPLETE
   -> ADVANCE_OR_FINISH 또는 FINISHED
 ```
@@ -426,7 +423,7 @@ interface DiceRng {
 - 운영 환경은 암호학적으로 안전한 난수 생성기를 사용한다.
 - 범위 변환에는 modulo bias가 없는 표준 `randomInt` 계열 API를 사용한다.
 - `rollDifferentFace`는 제외한 눈 이외의 5개를 정확히 같은 확률로 반환한다.
-- `pickIndex`는 `0..upperBound-1`을 편향 없이 반환하며 무작위 빈 슬롯, 홀짝 후보, 게임별 보상 라인, 보상 아이템과 동시 달성자 선택에 사용한다.
+- `pickIndex`는 `0..upperBound-1`을 편향 없이 반환하며 무작위 빈 슬롯, 홀짝 후보, 게임별 미션 라인·미션 종류와 보상 아이템 선택에 사용한다. 보상 수령 플레이어는 난수로 고르지 않는다.
 - 테스트에서는 미리 정한 값을 순서대로 반환하는 RNG를 주입한다.
 - 클라이언트가 난수, seed, 주사위 결과를 제안하지 않는다.
 - 이벤트 로그에는 확정된 결과와 원인이 된 명령을 남긴다.
@@ -442,7 +439,7 @@ interface DiceRng {
 - 상대에게는 `상대가 타짜 선택 중`이라는 단계만 보내고, 선택이 끝난 눈만 공개한다.
 - 서버 내부 오류와 스택 트레이스를 클라이언트에 보내지 않는다.
 - 계산된 합법 행동 목록을 현재 플레이어 뷰에 포함해 UI 하이라이트에 사용할 수 있다.
-- 보상 라인, 양쪽의 주사위 수·라인 점수 진행도, 두 목표의 획득 플레이어와 아이템은 양쪽에 동일하게 공개한다.
+- 미션 라인과 종류, 양쪽의 해당 진행도와 플레이어별 획득 아이템은 두 클라이언트에 동일하게 공개한다.
 
 예시 합법 행동 뷰는 다음과 같다.
 

@@ -267,14 +267,14 @@ export function LaneCard({
       className={`lane-card ${placementHint?.isRecommended ? "lane-card--recommended" : ""} ${
         isRewardLane ? "lane-card--reward" : ""
       }`}
-      aria-label={`${lane + 1}번 라인${isRewardLane ? ", 보상 라인" : ""}${placementHint?.isRecommended ? ", 초보 가이드 추천" : ""}`}
+      aria-label={`${lane + 1}번 라인${isRewardLane ? ", 미션 라인" : ""}${placementHint?.isRecommended ? ", 초보 가이드 추천" : ""}`}
     >
       <header className="lane-card__header">
         <span>
           LINE 0{lane + 1}
           {isRewardLane && (
             <b className="lane-card__reward-badge">
-              {rewardClaimed ? "보상 완료" : "보상 라인"}
+              {rewardClaimed ? "미션 완료" : "미션 라인"}
             </b>
           )}
           {placementHint?.isRecommended && <b>추천</b>}

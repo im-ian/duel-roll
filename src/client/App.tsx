@@ -292,8 +292,7 @@ function eventText(event: GameEvent, selfPlayerId: PlayerId): string {
     case "DIE_DESTROYED": return `${who(event.playerId)} ${event.boardOwnerPlayerId === selfPlayerId ? "내" : "상대"} 주사위를 파괴했습니다.`;
     case "TURN_DIE_REROLLED": return `${who(event.playerId)} 현재 주사위를 ${event.previousDie.face}→${event.die.face}로 다시 굴렸습니다.`;
     case "TURN_DIE_PARITY_CHANGED": return `${who(event.playerId)} 현재 주사위를 ${event.parity === "ODD" ? "홀수" : "짝수"} ${event.previousDie.face}→${event.die.face}로 바꿨습니다.`;
-    case "LINE_REWARD_CLAIMED": return `${who(event.playerId)} ${event.lane + 1}번 보상 라인을 완성해 ${ITEM_LABELS[event.itemType]} 아이템을 받았습니다.`;
-    case "LINE_SCORE_REWARD_CLAIMED": return `${who(event.playerId)} ${event.lane + 1}번 보상 라인에서 ${event.threshold}점을 먼저 달성해 ${ITEM_LABELS[event.itemType]} 아이템을 받았습니다.`;
+    case "LINE_MISSION_REWARD_CLAIMED": return `${who(event.playerId)} ${event.lane + 1}번 라인의 ${event.missionKind === "PLACEMENT_COUNT" ? `주사위 ${event.threshold}개 착수` : `${event.threshold}점 초과`} 미션을 달성해 ${ITEM_LABELS[event.itemType]} 아이템을 받았습니다.`;
     case "PLAYER_HELD": return `${who(event.playerId)} 홀드했습니다.`;
     case "PLAYER_SURRENDERED": return `${who(event.playerId)} 항복했습니다.`;
     case "GAME_FINISHED": return "경기가 끝났습니다.";
@@ -324,8 +323,8 @@ const TUTORIAL_STEPS = [
   },
   {
     eyebrow: "05 · REWARD LINE",
-    title: "보상 라인의 두 목표를 선점하세요",
-    body: "게임마다 무작위 라인 하나가 보상 라인이 됩니다. 주사위 3개와 라인 점수 15점을 각각 먼저 달성하면 목표마다 무작위 아이템 하나를 받습니다.",
+    title: "게임마다 하나의 라인 미션이 열립니다",
+    body: "미션 라인에는 주사위 3개 착수 또는 라인 점수 15점 초과 중 하나만 적용됩니다. 먼저 도착할 필요 없이 두 플레이어가 각자 달성해 아이템을 받을 수 있습니다.",
   },
   {
     eyebrow: "06 · TACTICS",
@@ -420,21 +419,21 @@ function TutorialVisual({ step }: { step: number }) {
 
   if (step === 4) {
     return (
-      <div className="tutorial-visual tutorial-reward" aria-label="보상 라인에서 주사위 세 개 또는 15점을 먼저 달성하고 무작위 아이템을 받는 예시">
+      <div className="tutorial-visual tutorial-reward" aria-label="게임마다 주사위 세 개 착수 또는 15점 초과 중 하나의 라인 미션이 적용되는 예시">
         <div className="tutorial-reward__lane">
           <span>REWARD LINE 02</span>
-          <div>
-            <DieView die={tutorialDie(5, "reward-a")} />
-            <DieView die={tutorialDie(5, "reward-b")} />
+          <div className="tutorial-reward__missions">
+            <strong>3개 착수</strong>
+            <b>OR</b>
+            <strong>15점 초과</strong>
           </div>
-          <strong>15점</strong>
-          <small>주사위 2/3 · 점수 15/15</small>
+          <small>매 경기 둘 중 하나</small>
         </div>
         <span className="tutorial-reward__arrow" aria-hidden="true">→</span>
         <div className="tutorial-reward__item">
           <span aria-hidden="true">?</span>
           <strong>랜덤 아이템</strong>
-          <small>목표마다 1개</small>
+          <small>플레이어마다 1개</small>
         </div>
       </div>
     );
@@ -587,38 +586,26 @@ function GameScreen({
   const placementHintsByLane = new Map(
     placementHints.map((hint) => [hint.lane, hint]),
   );
-  const lineReward = state.lineReward;
-  const ownRewardProgress = Math.min(
-    ownBoard[lineReward.lane].length,
-    lineReward.threshold,
-  );
-  const opponentRewardProgress = Math.min(
-    opponentBoard[lineReward.lane].length,
-    lineReward.threshold,
-  );
-  const lineRewardClaimed = lineReward.claimedByPlayerId !== null;
-  const lineRewardClaimedBySelf = lineReward.claimedByPlayerId === selfId;
-  const lineRewardItemLabel = lineReward.itemType
-    ? ITEM_LABELS[lineReward.itemType]
-    : null;
-  const lineScoreReward = state.lineScoreReward;
-  const ownScoreRewardProgress = Math.min(
-    ownScores[lineReward.lane],
-    lineScoreReward.threshold,
-  );
-  const opponentScoreRewardProgress = Math.min(
-    opponentScores[lineReward.lane],
-    lineScoreReward.threshold,
-  );
-  const lineScoreRewardClaimed =
-    lineScoreReward.claimedByPlayerId !== null;
-  const lineScoreRewardClaimedBySelf =
-    lineScoreReward.claimedByPlayerId === selfId;
-  const lineScoreRewardItemLabel = lineScoreReward.itemType
-    ? ITEM_LABELS[lineScoreReward.itemType]
-    : null;
-  const allLineRewardsClaimed =
-    lineRewardClaimed && lineScoreRewardClaimed;
+  const lineMission = state.lineMission;
+  const ownMissionItem = lineMission.rewardItems[selfId] ?? null;
+  const opponentMissionItem = lineMission.rewardItems[opponentId] ?? null;
+  const ownMissionValue = lineMission.kind === "PLACEMENT_COUNT"
+    ? ownBoard[lineMission.lane].length
+    : ownScores[lineMission.lane];
+  const opponentMissionValue = lineMission.kind === "PLACEMENT_COUNT"
+    ? opponentBoard[lineMission.lane].length
+    : opponentScores[lineMission.lane];
+  const ownMissionProgress = lineMission.kind === "PLACEMENT_COUNT"
+    ? `${Math.min(ownMissionValue, lineMission.threshold)}/${lineMission.threshold}`
+    : `${Math.min(ownMissionValue, lineMission.threshold)}/${lineMission.threshold}+`;
+  const opponentMissionProgress = lineMission.kind === "PLACEMENT_COUNT"
+    ? `${Math.min(opponentMissionValue, lineMission.threshold)}/${lineMission.threshold}`
+    : `${Math.min(opponentMissionValue, lineMission.threshold)}/${lineMission.threshold}+`;
+  const lineMissionTitle = lineMission.kind === "PLACEMENT_COUNT"
+    ? `주사위 ${lineMission.threshold}개 착수`
+    : `라인 ${lineMission.threshold}점 초과`;
+  const allLineMissionRewardsClaimed =
+    ownMissionItem !== null && opponentMissionItem !== null;
   const swapItemStatus = state.itemUsedThisTurn
     ? "이번 턴 사용 완료"
     : inventory.SWAP <= 0
@@ -735,48 +722,24 @@ function GameScreen({
         <div><span>{opponent?.nickname ?? "상대"}</span><strong>{opponentTotal}</strong></div>
       </section>
 
-      <section className={`line-reward ${allLineRewardsClaimed ? "line-reward--claimed" : ""}`}>
+      <section className={`line-reward ${allLineMissionRewardsClaimed ? "line-reward--claimed" : ""}`}>
         <span className="line-reward__lane" aria-hidden="true">
           <small>LINE</small>
-          0{lineReward.lane + 1}
+          0{lineMission.lane + 1}
         </span>
-        <div className="line-reward__objectives">
-          <p className="eyebrow">목표마다 랜덤 아이템 1개</p>
-          <div className={`line-reward__objective ${lineRewardClaimed ? "is-claimed" : ""}`}>
-            <strong>
-              {lineRewardClaimed
-                ? `3개 · ${lineRewardClaimedBySelf ? "내가" : "상대가"} ${lineRewardItemLabel ?? "아이템"} 획득`
-                : `주사위 ${lineReward.threshold}개 선점`}
-            </strong>
-            {lineRewardClaimed ? (
-              <b className="line-reward__complete">완료</b>
-            ) : (
-              <span
-                className="line-reward__progress"
-                aria-label={`주사위 보상 진행도, 나 ${ownRewardProgress}/${lineReward.threshold}, 상대 ${opponentRewardProgress}/${lineReward.threshold}`}
-              >
-                나 <b>{ownRewardProgress}/{lineReward.threshold}</b>
-                상대 <b>{opponentRewardProgress}/{lineReward.threshold}</b>
-              </span>
-            )}
-          </div>
-          <div className={`line-reward__objective ${lineScoreRewardClaimed ? "is-claimed" : ""}`}>
-            <strong>
-              {lineScoreRewardClaimed
-                ? `15점 · ${lineScoreRewardClaimedBySelf ? "내가" : "상대가"} ${lineScoreRewardItemLabel ?? "아이템"} 획득`
-                : `라인 ${lineScoreReward.threshold}점 선점`}
-            </strong>
-            {lineScoreRewardClaimed ? (
-              <b className="line-reward__complete">완료</b>
-            ) : (
-              <span
-                className="line-reward__progress"
-                aria-label={`점수 보상 진행도, 나 ${ownScoreRewardProgress}/${lineScoreReward.threshold}, 상대 ${opponentScoreRewardProgress}/${lineScoreReward.threshold}`}
-              >
-                나 <b>{ownScoreRewardProgress}/{lineScoreReward.threshold}</b>
-                상대 <b>{opponentScoreRewardProgress}/{lineScoreReward.threshold}</b>
-              </span>
-            )}
+        <div className="line-reward__mission">
+          <p className="eyebrow">이번 경기 고유 미션 · 각자 1회</p>
+          <strong>{lineMissionTitle}</strong>
+          <small>달성한 플레이어마다 랜덤 아이템을 받습니다.</small>
+          <div className="line-reward__players">
+            <span className={ownMissionItem ? "is-claimed" : ""}>
+              나
+              <b>{ownMissionItem ? `${ITEM_LABELS[ownMissionItem]} 획득` : ownMissionProgress}</b>
+            </span>
+            <span className={opponentMissionItem ? "is-claimed" : ""}>
+              상대
+              <b>{opponentMissionItem ? `${ITEM_LABELS[opponentMissionItem]} 획득` : opponentMissionProgress}</b>
+            </span>
           </div>
         </div>
       </section>
@@ -910,8 +873,8 @@ function GameScreen({
               opponentScore={opponentScores[lane]}
               ownScore={ownScores[lane]}
               placementHint={placementHintsByLane.get(lane)}
-              isRewardLane={lineReward.lane === lane}
-              rewardClaimed={allLineRewardsClaimed}
+              isRewardLane={lineMission.lane === lane}
+              rewardClaimed={allLineMissionRewardsClaimed}
               disabled={controlsLocked}
               opponentSelectableDieIds={opponentSelectableDieIds}
               ownSelectableDieIds={ownSelectableDieIds}

@@ -4,8 +4,9 @@ import {
   ITEM_TYPES,
   LANE_CAPACITY,
   LANE_COUNT,
-  LINE_REWARD_THRESHOLD,
-  LINE_SCORE_REWARD_THRESHOLD,
+  LINE_MISSION_KINDS,
+  LINE_PLACEMENT_MISSION_THRESHOLD,
+  LINE_SCORE_MISSION_THRESHOLD,
   STARTING_ITEM_COUNT,
   STARTING_ITEM_TYPES,
 } from "./constants";
@@ -209,109 +210,51 @@ function consumeItem(
   state.itemUsedThisTurn = true;
 }
 
-function claimRandomItemReward(
+function hasCompletedLineMission(
   state: GameState,
-  reward: {
-    claimedByPlayerId: PlayerId | null;
-    itemType: ItemType | null;
-  },
-  possibleClaimants: readonly PlayerId[],
-  context: EngineContext,
-): { playerId: PlayerId; itemType: ItemType } | null {
-  if (reward.claimedByPlayerId !== null) return null;
-  const possibleClaimantSet = new Set(possibleClaimants);
-  const eligibleClaimants = state.players.filter((playerId) =>
-    possibleClaimantSet.has(playerId),
-  );
-  if (eligibleClaimants.length === 0) return null;
-
-  const playerId = eligibleClaimants.length === 1
-    ? eligibleClaimants[0]
-    : pickRandom(
-        eligibleClaimants,
-        context,
-        "No player is available to claim the line reward.",
-      );
-  invariant(playerId, "The line reward claimant disappeared unexpectedly.");
-  const itemType = pickRandom(
-    ITEM_TYPES,
-    context,
-    "No item is available for the line reward.",
-  );
-
-  inventoryOf(state, playerId)[itemType] += 1;
-  reward.claimedByPlayerId = playerId;
-  reward.itemType = itemType;
-  return { playerId, itemType };
+  playerId: PlayerId,
+): boolean {
+  const mission = state.lineMission;
+  const lane = boardOf(state, playerId)[mission.lane];
+  return mission.kind === "PLACEMENT_COUNT"
+    ? lane.length >= mission.threshold
+    : scoreLane(lane) > mission.threshold;
 }
 
-function claimLineReward(
+function claimLineMissionRewards(
   state: GameState,
-  possibleClaimants: readonly PlayerId[],
+  possiblePlayers: readonly PlayerId[],
   context: EngineContext,
   events: GameEvent[],
 ): void {
-  const reward = state.lineReward;
-  const possibleClaimantSet = new Set(possibleClaimants);
-  const claim = claimRandomItemReward(
-    state,
-    reward,
-    state.players.filter(
-      (playerId) =>
-        possibleClaimantSet.has(playerId) &&
-        boardOf(state, playerId)[reward.lane].length >= reward.threshold,
-    ),
-    context,
-  );
-  if (!claim) return;
+  const mission = state.lineMission;
+  const possiblePlayerSet = new Set(possiblePlayers);
 
-  events.push({
-    type: "LINE_REWARD_CLAIMED",
-    playerId: claim.playerId,
-    lane: reward.lane,
-    threshold: reward.threshold,
-    itemType: claim.itemType,
-  });
-}
+  for (const playerId of state.players) {
+    if (
+      !possiblePlayerSet.has(playerId) ||
+      mission.rewardItems[playerId] !== null ||
+      !hasCompletedLineMission(state, playerId)
+    ) {
+      continue;
+    }
 
-function claimLineScoreReward(
-  state: GameState,
-  possibleClaimants: readonly PlayerId[],
-  context: EngineContext,
-  events: GameEvent[],
-): void {
-  const reward = state.lineScoreReward;
-  const lane = state.lineReward.lane;
-  const possibleClaimantSet = new Set(possibleClaimants);
-  const claim = claimRandomItemReward(
-    state,
-    reward,
-    state.players.filter(
-      (playerId) =>
-        possibleClaimantSet.has(playerId) &&
-        scoreLane(boardOf(state, playerId)[lane]) >= reward.threshold,
-    ),
-    context,
-  );
-  if (!claim) return;
-
-  events.push({
-    type: "LINE_SCORE_REWARD_CLAIMED",
-    playerId: claim.playerId,
-    lane,
-    threshold: reward.threshold,
-    itemType: claim.itemType,
-  });
-}
-
-function claimLineObjectives(
-  state: GameState,
-  possibleClaimants: readonly PlayerId[],
-  context: EngineContext,
-  events: GameEvent[],
-): void {
-  claimLineReward(state, possibleClaimants, context, events);
-  claimLineScoreReward(state, possibleClaimants, context, events);
+    const itemType = pickRandom(
+      ITEM_TYPES,
+      context,
+      "No item is available for the line mission reward.",
+    );
+    inventoryOf(state, playerId)[itemType] += 1;
+    mission.rewardItems[playerId] = itemType;
+    events.push({
+      type: "LINE_MISSION_REWARD_CLAIMED",
+      playerId,
+      lane: mission.lane,
+      missionKind: mission.kind,
+      threshold: mission.threshold,
+      itemType,
+    });
+  }
 }
 
 function finishNormally(state: GameState, events: GameEvent[]): void {
@@ -383,13 +326,18 @@ export function createGame(
     "SHIELD",
     context,
   );
-  const rewardLane = pickRandom(
+  const missionLane = pickRandom(
     laneIndexes(),
     context,
-    "No lane is available for the line reward.",
+    "No lane is available for the line mission.",
+  );
+  const missionKind = pickRandom(
+    LINE_MISSION_KINDS,
+    context,
+    "No line mission kind is available.",
   );
   const state: GameState = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     gameId: context.ids.next("game"),
     version: 0,
     players,
@@ -411,17 +359,19 @@ export function createGame(
       [players[1]]: createStartingInventory(),
     },
     itemUsedThisTurn: false,
-    lineReward: {
-      lane: rewardLane,
-      threshold: LINE_REWARD_THRESHOLD,
-      claimedByPlayerId: null,
-      itemType: null,
-    },
-    lineScoreReward: {
-      threshold: LINE_SCORE_REWARD_THRESHOLD,
-      claimedByPlayerId: null,
-      itemType: null,
-    },
+    lineMission: missionKind === "PLACEMENT_COUNT"
+      ? {
+          kind: missionKind,
+          lane: missionLane,
+          threshold: LINE_PLACEMENT_MISSION_THRESHOLD,
+          rewardItems: { [players[0]]: null, [players[1]]: null },
+        }
+      : {
+          kind: missionKind,
+          lane: missionLane,
+          threshold: LINE_SCORE_MISSION_THRESHOLD,
+          rewardItems: { [players[0]]: null, [players[1]]: null },
+        },
     held: {
       [players[0]]: false,
       [players[1]]: false,
@@ -492,8 +442,8 @@ export function applyCommand(
         lane: command.lane,
         die,
       });
-      if (command.lane === state.lineReward.lane) {
-        claimLineObjectives(state, [actorPlayerId], context, events);
+      if (command.lane === state.lineMission.lane) {
+        claimLineMissionRewards(state, [actorPlayerId], context, events);
       }
       advanceOrFinish(state, actorPlayerId, context, events);
       break;
@@ -643,8 +593,11 @@ export function applyCommand(
         ownDie,
         opponentDie,
       });
-      if (command.lane === state.lineReward.lane) {
-        claimLineScoreReward(
+      if (
+        state.lineMission.kind === "SCORE_OVER" &&
+        command.lane === state.lineMission.lane
+      ) {
+        claimLineMissionRewards(
           state,
           [actorPlayerId, opponentPlayerId],
           context,
@@ -700,8 +653,11 @@ export function applyCommand(
         previousDie: target,
         die: rerolledDie,
       });
-      if (command.lane === state.lineReward.lane) {
-        claimLineScoreReward(
+      if (
+        state.lineMission.kind === "SCORE_OVER" &&
+        command.lane === state.lineMission.lane
+      ) {
+        claimLineMissionRewards(
           state,
           [command.boardOwnerPlayerId],
           context,
@@ -748,10 +704,10 @@ export function applyCommand(
         playerId: actorPlayerId,
         placements,
       });
-      claimLineObjectives(
+      claimLineMissionRewards(
         state,
         placements
-          .filter(({ lane }) => lane === state.lineReward.lane)
+          .filter(({ lane }) => lane === state.lineMission.lane)
           .map(({ boardOwnerPlayerId }) => boardOwnerPlayerId),
         context,
         events,
@@ -916,8 +872,8 @@ export function applyCommand(
         lane: command.lane,
         die,
       });
-      if (command.lane === state.lineReward.lane) {
-        claimLineObjectives(
+      if (command.lane === state.lineMission.lane) {
+        claimLineMissionRewards(
           state,
           [command.boardOwnerPlayerId],
           context,
@@ -1079,7 +1035,7 @@ export function assertGameInvariants(state: GameState): void {
     throw new RuleError("INVARIANT_VIOLATION", message);
   };
 
-  if (state.schemaVersion !== 6) {
+  if (state.schemaVersion !== 7) {
     fail("Unsupported game state schema version.");
   }
   if (state.players.length !== 2 || state.players[0] === state.players[1]) {
@@ -1125,63 +1081,44 @@ export function assertGameInvariants(state: GameState): void {
     fail("itemUsedThisTurn must be a boolean.");
   }
 
-  const lineReward = state.lineReward;
-  invariant(lineReward, "Game must contain a line reward objective.");
+  const lineMission = state.lineMission;
+  invariant(lineMission, "Game must contain a line mission.");
   if (
-    !Number.isInteger(lineReward.lane) ||
-    lineReward.lane < 0 ||
-    lineReward.lane >= LANE_COUNT
+    !Number.isInteger(lineMission.lane) ||
+    lineMission.lane < 0 ||
+    lineMission.lane >= LANE_COUNT
   ) {
-    fail("Line reward must target a valid lane.");
-  }
-  if (lineReward.threshold !== LINE_REWARD_THRESHOLD) {
-    fail(`Line reward threshold must be ${LINE_REWARD_THRESHOLD}.`);
-  }
-  const hasRewardClaimant = lineReward.claimedByPlayerId !== null;
-  const hasRewardItem = lineReward.itemType !== null;
-  if (hasRewardClaimant !== hasRewardItem) {
-    fail("Line reward claimant and item must be recorded together.");
+    fail("Line mission must target a valid lane.");
   }
   if (
-    lineReward.claimedByPlayerId !== null &&
-    !state.players.includes(lineReward.claimedByPlayerId)
+    lineMission.kind === "PLACEMENT_COUNT"
+      ? lineMission.threshold !== LINE_PLACEMENT_MISSION_THRESHOLD
+      : lineMission.kind === "SCORE_OVER"
+        ? lineMission.threshold !== LINE_SCORE_MISSION_THRESHOLD
+        : true
   ) {
-    fail("Line reward claimant must belong to the game.");
+    fail("Line mission kind and threshold must be a supported pair.");
   }
+  const rewardPlayerIds = Object.keys(lineMission.rewardItems);
   if (
-    lineReward.itemType !== null &&
-    !ITEM_TYPES.includes(lineReward.itemType)
+    rewardPlayerIds.length !== state.players.length ||
+    rewardPlayerIds.some((playerId) => !state.players.includes(playerId))
   ) {
-    fail("Line reward item must belong to the item catalog.");
+    fail("Line mission rewards must contain exactly the game players.");
   }
-
-  const lineScoreReward = state.lineScoreReward;
-  invariant(
-    lineScoreReward,
-    "Game must contain a line score reward objective.",
-  );
-  if (lineScoreReward.threshold !== LINE_SCORE_REWARD_THRESHOLD) {
-    fail(
-      `Line score reward threshold must be ${LINE_SCORE_REWARD_THRESHOLD}.`,
+  for (const playerId of state.players) {
+    if (!(playerId in lineMission.rewardItems)) {
+      fail(`Missing line mission reward record for ${playerId}.`);
+    }
+    const itemType = lineMission.rewardItems[playerId];
+    if (itemType === null) continue;
+    invariant(
+      itemType !== undefined,
+      `Missing line mission reward record for ${playerId}.`,
     );
-  }
-  const hasScoreRewardClaimant =
-    lineScoreReward.claimedByPlayerId !== null;
-  const hasScoreRewardItem = lineScoreReward.itemType !== null;
-  if (hasScoreRewardClaimant !== hasScoreRewardItem) {
-    fail("Line score reward claimant and item must be recorded together.");
-  }
-  if (
-    lineScoreReward.claimedByPlayerId !== null &&
-    !state.players.includes(lineScoreReward.claimedByPlayerId)
-  ) {
-    fail("Line score reward claimant must belong to the game.");
-  }
-  if (
-    lineScoreReward.itemType !== null &&
-    !ITEM_TYPES.includes(lineScoreReward.itemType)
-  ) {
-    fail("Line score reward item must belong to the item catalog.");
+    if (!ITEM_TYPES.includes(itemType)) {
+      fail("Line mission reward item must belong to the item catalog.");
+    }
   }
 
   if (state.pending?.source === "TURN") {
